@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1045397450464",
+    "project_id": "bnya-833b5",
+    "storage_bucket": "bnya-833b5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1045397450464:android:f2bcd60c4ef55fbee56a85",
+        "android_client_info": {
+          "package_name": "com.example.bnya"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCK04r3EAvpjJuZSQLXJv3JfJXb571WY9U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
