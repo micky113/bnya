@@ -4,6 +4,9 @@ import 'package:bnya/view/ledger_screen/ledger_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:bnya/view/lottery/admin_upload_screen.dart';
+import 'package:bnya/view/lottery/ticket_directory_screen.dart';
+import 'package:bnya/view/lottery/live_draw_screen.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -291,6 +294,89 @@ class _HomePageState extends State<HomePage> {
         foregroundColor: Colors.blue[900],
         elevation: 1,
         actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16.0),
+            child: PopupMenuButton<String>(
+              onSelected: (value) {
+                Widget screen;
+                switch (value) {
+                  case 'register':
+                    screen = const AdminUploadScreen();
+                    break;
+                  case 'dashboard':
+                    screen = const TicketDirectoryScreen();
+                    break;
+                  case 'draw':
+                    screen = const LiveDrawScreen();
+                    break;
+                  default:
+                    return;
+                }
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => screen),
+                );
+              },
+              itemBuilder: (BuildContext context) => [
+                const PopupMenuItem<String>(
+                  value: 'register',
+                  child: Row(
+                    children: [
+                      Icon(Icons.app_registration, color: Color(0xFF00695C), size: 20),
+                      SizedBox(width: 10),
+                      Text("Register Sold Tickets"),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'dashboard',
+                  child: Row(
+                    children: [
+                      Icon(Icons.dashboard_outlined, color: Color(0xFF0277BD), size: 20),
+                      SizedBox(width: 10),
+                      Text("Ticket Directory"),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'draw',
+                  child: Row(
+                    children: [
+                      Icon(Icons.live_tv_rounded, color: Colors.amber, size: 20),
+                      SizedBox(width: 10),
+                      Text("Live Projector Draw"),
+                    ],
+                  ),
+                ),
+              ],
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade50,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.amber.shade200, width: 1.5),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.local_activity_outlined, color: Colors.amber.shade900, size: 16),
+                    const SizedBox(width: 8),
+                    Text(
+                      "LOTTERY 🎟️",
+                      style: TextStyle(
+                        color: Colors.amber.shade900,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(Icons.arrow_drop_down, color: Colors.amber.shade900, size: 16),
+                  ],
+                ),
+              ),
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 16.0),
             child: TextButton.icon(
