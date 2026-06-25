@@ -19,7 +19,7 @@ class LiveDrawScreen extends StatefulWidget {
   State<LiveDrawScreen> createState() => _LiveDrawScreenState();
 }
 
-class _LiveDrawScreenState extends State<LiveDrawScreen> with TickerProviderStateMixin {
+class _LiveDrawScreenState extends State<LiveDrawScreen> {
   DrawState _currentState = DrawState.idle;
 
   // Local storage for tickets
@@ -54,7 +54,7 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> with TickerProviderStat
   bool _isSyncing = false;
   bool _isSynced = false;
 
-  // Mask Name helper
+  // Mask Name helper for privacy
   String _maskName(String name) {
     if (name.isEmpty) return "";
     final parts = name.split(' ');
@@ -225,6 +225,13 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> with TickerProviderStat
 
   // Draw algorithm - Grand Prize
   void _drawNextGrandPrize() {
+    if (_grandPrizeWinners.length >= 5) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("All 5 Grand Prizes have already been drawn.")),
+      );
+      return;
+    }
+
     if (_grandPrizePool.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("No eligible tickets remaining for Grand Prize draw.")),
@@ -283,16 +290,54 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> with TickerProviderStat
       final FirebaseFirestore firestore = FirebaseFirestore.instance;
       final WriteBatch batch = firestore.batch();
 
-      // Consolation winners batch set
+      // 1. Reset all winning flags in the tickets collection first to clear any old draws
+      final oldWinnersSnap = await firestore
+          .collection('tickets')
+          .where('hasWonGrandPrize', isEqualTo: true)
+          .get();
+      for (var doc in oldWinnersSnap.docs) {
+        batch.update(doc.reference, {'hasWonGrandPrize': false});
+      }
+
+      final oldConsolationsSnap = await firestore
+          .collection('tickets')
+          .where('hasWonConsolation', isEqualTo: true)
+          .get();
+      for (var doc in oldConsolationsSnap.docs) {
+        batch.update(doc.reference, {'hasWonConsolation': false});
+      }
+
+      // 2. Delete all previous winners in the separate grand_winners and consolation_winners collections
+      final oldGrandWinnersColl = await firestore.collection('grand_winners').get();
+      for (var doc in oldGrandWinnersColl.docs) {
+        batch.delete(doc.reference);
+      }
+
+      final oldConsolationWinnersColl = await firestore.collection('consolation_winners').get();
+      for (var doc in oldConsolationWinnersColl.docs) {
+        batch.delete(doc.reference);
+      }
+
+      // 3. Write new Consolation winners into the consolation_winners collection and update tickets flags
       for (var winner in _consolationWinners.values) {
+        // Write to separate collection
+        final winnerDocRef = firestore.collection('consolation_winners').doc(winner.ticketNumber.toString());
+        batch.set(winnerDocRef, winner.toMap());
+
+        // Update main tickets flag
         final docRef = firestore.collection('tickets').doc(winner.ticketNumber.toString());
         batch.update(docRef, {
           'hasWonConsolation': true,
         });
       }
 
-      // Grand prize winners batch set
+      // 4. Write new Grand prize winners into the grand_winners collection and update tickets flags
       for (var winner in _grandPrizeWinners) {
+        // Write to separate collection
+        final winnerDocRef = firestore.collection('grand_winners').doc(winner.ticketNumber.toString());
+        batch.set(winnerDocRef, winner.toMap());
+
+        // Update main tickets flag
         final docRef = firestore.collection('tickets').doc(winner.ticketNumber.toString());
         batch.update(docRef, {
           'hasWonGrandPrize': true,
@@ -410,50 +455,53 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> with TickerProviderStat
   }
 
   Widget _buildIdleState() {
-    return Center(
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 600),
-        padding: const EdgeInsets.all(32),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1E293B),
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: Colors.teal.shade800, width: 2),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.play_circle_outline, size: 100, color: Colors.tealAccent),
-            const SizedBox(height: 24),
-            const Text(
-              "COMMUNITY LOTTERY DRAW",
-              style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: 2),
-            ),
-            const SizedBox(height: 16),
-            const Divider(color: Colors.white24),
-            const SizedBox(height: 16),
-            _buildInfoRow("Total Sold Tickets in Pool", _allSoldTickets.length.toString()),
-            _buildInfoRow("Active Books", _activeBookIds.length.toString()),
-            _buildInfoRow("Consolation Prizes (1 per book)", _activeBookIds.length.toString()),
-            _buildInfoRow("Grand Prizes (Global Draw)", "5 Prizes"),
-            const SizedBox(height: 32),
-            SizedBox(
-              width: double.infinity,
-              height: 56,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.tealAccent.shade700,
-                  foregroundColor: Colors.black,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  elevation: 8,
-                ),
-                onPressed: _startConsolationDraw,
-                child: const Text(
-                  "START DRAWING CONSOLATION PRIZES",
-                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, letterSpacing: 1),
+    return SingleChildScrollView(
+      child: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 600),
+          padding: const EdgeInsets.all(32),
+          margin: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E293B),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.teal.shade800, width: 2),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.play_circle_outline, size: 100, color: Colors.tealAccent),
+              const SizedBox(height: 24),
+              const Text(
+                "COMMUNITY LOTTERY DRAW",
+                style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: 2),
+              ),
+              const SizedBox(height: 16),
+              const Divider(color: Colors.white24),
+              const SizedBox(height: 16),
+              _buildInfoRow("Total Sold Tickets in Pool", _allSoldTickets.length.toString()),
+              _buildInfoRow("Active Books", _activeBookIds.length.toString()),
+              _buildInfoRow("Consolation Prizes (1 per book)", _activeBookIds.length.toString()),
+              _buildInfoRow("Grand Prizes (Global Draw)", "5 Prizes"),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.tealAccent.shade700,
+                    foregroundColor: Colors.black,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    elevation: 8,
+                  ),
+                  onPressed: _startConsolationDraw,
+                  child: const Text(
+                    "START DRAWING CONSOLATION PRIZES",
+                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, letterSpacing: 1),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -473,55 +521,110 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> with TickerProviderStat
   }
 
   Widget _buildConsolationsDrawState() {
+    final isMobile = MediaQuery.of(context).size.width < 700;
+
     return Column(
       children: [
         // Top Banner Info
         Container(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(16),
           color: const Color(0xFF1E293B),
-          child: Row(
-            children: [
-              Icon(
-                _currentState == DrawState.drawingConsolations ? Icons.autorenew : Icons.check_circle,
-                color: Colors.tealAccent,
-              ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _currentState == DrawState.drawingConsolations
-                        ? "PHASE 1: DRAWING CONSOLATION WINNERS"
-                        : "CONSOLATION WINNERS DRAWS COMPLETED",
-                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    _currentState == DrawState.drawingConsolations
-                        ? "Drawing 1 ticket from each of the ${_activeBookIds.length} active books..."
-                        : "Drawn ${_consolationWinners.length} consolation winners. Ready for Grand Prizes.",
-                    style: const TextStyle(color: Colors.grey, fontSize: 13),
-                  ),
-                ],
-              ),
-              const Spacer(),
-              if (_currentState == DrawState.readyForGrandPrizes)
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.amber.shade700,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      _currentState = DrawState.drawingGrandPrize;
-                      _currentGrandPrizeIndex = 0;
-                    });
-                  },
-                  icon: const Icon(Icons.emoji_events),
-                  label: const Text("PROCEED TO GRAND PRIZES", style: TextStyle(fontWeight: FontWeight.bold)),
+          child: isMobile
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          _currentState == DrawState.drawingConsolations
+                              ? Icons.autorenew
+                              : Icons.check_circle,
+                          color: Colors.tealAccent,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            _currentState == DrawState.drawingConsolations
+                                ? "PHASE 1: CONSOLATION DRAWS"
+                                : "CONSOLATION DRAWS COMPLETED",
+                            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _currentState == DrawState.drawingConsolations
+                          ? "Drawing 1 ticket from each of the ${_activeBookIds.length} active books..."
+                          : "Drawn ${_consolationWinners.length} consolation winners. Ready for Grand Prizes.",
+                      style: const TextStyle(color: Colors.grey, fontSize: 13),
+                    ),
+                    if (_currentState == DrawState.readyForGrandPrizes) ...[
+                      const SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.amber.shade700,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _currentState = DrawState.drawingGrandPrize;
+                            _currentGrandPrizeIndex = 0;
+                          });
+                        },
+                        icon: const Icon(Icons.emoji_events),
+                        label: const Text("PROCEED TO GRAND PRIZES", style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ],
+                )
+              : Row(
+                  children: [
+                    Icon(
+                      _currentState == DrawState.drawingConsolations ? Icons.autorenew : Icons.check_circle,
+                      color: Colors.tealAccent,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _currentState == DrawState.drawingConsolations
+                                ? "PHASE 1: DRAWING CONSOLATION WINNERS"
+                                : "CONSOLATION WINNERS DRAWS COMPLETED",
+                            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            _currentState == DrawState.drawingConsolations
+                                ? "Drawing 1 ticket from each of the ${_activeBookIds.length} active books..."
+                                : "Drawn ${_consolationWinners.length} consolation winners. Ready for Grand Prizes.",
+                            style: const TextStyle(color: Colors.grey, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_currentState == DrawState.readyForGrandPrizes) ...[
+                      const SizedBox(width: 16),
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.amber.shade700,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _currentState = DrawState.drawingGrandPrize;
+                            _currentGrandPrizeIndex = 0;
+                          });
+                        },
+                        icon: const Icon(Icons.emoji_events),
+                        label: const Text("PROCEED TO GRAND PRIZES", style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ],
                 ),
-            ],
-          ),
         ),
 
         // Grid View
@@ -611,222 +714,224 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> with TickerProviderStat
   }
 
   Widget _buildGrandPrizeDrawState() {
-    return Center(
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 800),
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Gold Title
-            Text(
-              "GRAND PRIZE DRAWING",
-              style: TextStyle(
-                color: Colors.amber.shade400,
-                fontSize: 32,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 3,
-                shadows: [
-                  Shadow(color: Colors.amber.shade900, blurRadius: 15),
-                ],
+    return SingleChildScrollView(
+      child: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 800),
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Gold Title
+              Text(
+                "GRAND PRIZE DRAWING",
+                style: TextStyle(
+                  color: Colors.amber.shade400,
+                  fontSize: 32,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 3,
+                  shadows: [
+                    Shadow(color: Colors.amber.shade900, blurRadius: 15),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              "Prize ${_currentGrandPrizeIndex + 1} of 5",
-              style: const TextStyle(color: Colors.white70, fontSize: 18, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 36),
+              const SizedBox(height: 10),
+              Text(
+                "Prize ${_currentGrandPrizeIndex + 1} of 5",
+                style: const TextStyle(color: Colors.white70, fontSize: 18, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 36),
 
-            // Giant Screen Card
-            Container(
-              height: 300,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E293B),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: Colors.amber.shade700, width: 3),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.amber.shade900.withOpacity(0.2),
-                    blurRadius: 30,
-                    spreadRadius: 5,
-                  ),
-                ],
-              ),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  // Countdown overlay
-                  if (_isCountingDown)
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          _countdownSeconds.toString(),
-                          style: TextStyle(
-                            color: Colors.amber.shade400,
-                            fontSize: 100,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        const Text(
-                          "SELECTING WINNER...",
-                          style: TextStyle(
-                            color: Colors.white54,
-                            fontSize: 16,
-                            letterSpacing: 2,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          "$_rollingGrandNumber - $_rollingGrandName",
-                          style: const TextStyle(color: Colors.amberAccent, fontSize: 14, fontFamily: 'monospace'),
-                        ),
-                      ],
-                    )
-                  // Winner reveal
-                  else if (_revealedGrandWinner != null)
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.emoji_events, size: 64, color: Colors.amber),
-                        const SizedBox(height: 16),
-                        Text(
-                          "TICKET #${_revealedGrandWinner!.ticketNumber.toString().padLeft(4, '0')}",
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 42,
-                            fontWeight: FontWeight.w900,
-                            fontFamily: 'monospace',
-                            letterSpacing: 4,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          _maskName(_revealedGrandWinner!.buyerName),
-                          style: TextStyle(
-                            color: Colors.amber.shade300,
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          "Book #${_revealedGrandWinner!.bookId}",
-                          style: const TextStyle(color: Colors.grey, fontSize: 14),
-                        ),
-                      ],
-                    )
-                  // Waiting state
-                  else
-                    const Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.casino, size: 60, color: Colors.white38),
-                        SizedBox(height: 16),
-                        Text(
-                          "READY TO DRAW",
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 2,
-                          ),
-                        ),
-                      ],
+              // Giant Screen Card
+              Container(
+                height: 300,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E293B),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: Colors.amber.shade700, width: 3),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.amber.shade900.withOpacity(0.2),
+                      blurRadius: 30,
+                      spreadRadius: 5,
                     ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 36),
-
-            // Controls
-            if (!_isCountingDown)
-              SizedBox(
-                width: 250,
-                height: 56,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.amber.shade600,
-                    foregroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    elevation: 6,
-                  ),
-                  onPressed: _drawNextGrandPrize,
-                  icon: const Icon(Icons.play_arrow, size: 24),
-                  label: Text(
-                    _revealedGrandWinner == null ? "DRAW GRAND PRIZE" : "DRAW NEXT PRIZE",
-                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 1),
-                  ),
+                  ],
                 ),
-              ),
-
-            const SizedBox(height: 48),
-
-            // Progress Indicators showing drawn grand prizes
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(5, (index) {
-                final isDrawn = index < _grandPrizeWinners.length;
-                return Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: isDrawn ? Colors.amber.shade700 : const Color(0xFF1E293B),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.amber.shade700, width: 2),
-                  ),
-                  child: Center(
-                    child: isDrawn
-                        ? const Icon(Icons.star, color: Colors.white, size: 20)
-                        : Text(
-                            (index + 1).toString(),
-                            style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Countdown overlay
+                    if (_isCountingDown)
+                      Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            _countdownSeconds.toString(),
+                            style: TextStyle(
+                              color: Colors.amber.shade400,
+                              fontSize: 100,
+                              fontWeight: FontWeight.w900,
+                            ),
                           ),
-                  ),
-                );
-              }),
-            ),
-
-            if (_grandPrizeWinners.length == 5) ...[
-              const SizedBox(height: 32),
-              SizedBox(
-                width: 300,
-                height: 50,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green.shade600,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  onPressed: _isSyncing ? null : _syncDrawResults,
-                  icon: _isSyncing
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                        )
-                      : const Icon(Icons.cloud_done),
-                  label: const Text(
-                    "SYNC DRAW RESULTS TO CLOUD",
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
+                          const SizedBox(height: 10),
+                          const Text(
+                            "SELECTING WINNER...",
+                            style: TextStyle(
+                              color: Colors.white54,
+                              fontSize: 16,
+                              letterSpacing: 2,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            "$_rollingGrandNumber - $_rollingGrandName",
+                            style: const TextStyle(color: Colors.amberAccent, fontSize: 14, fontFamily: 'monospace'),
+                          ),
+                        ],
+                      )
+                    // Winner reveal
+                    else if (_revealedGrandWinner != null)
+                      Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.emoji_events, size: 64, color: Colors.amber),
+                          const SizedBox(height: 16),
+                          Text(
+                            "TICKET #${_revealedGrandWinner!.ticketNumber.toString().padLeft(4, '0')}",
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 42,
+                              fontWeight: FontWeight.w900,
+                              fontFamily: 'monospace',
+                              letterSpacing: 4,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            _maskName(_revealedGrandWinner!.buyerName),
+                            style: TextStyle(
+                              color: Colors.amber.shade300,
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            "Book #${_revealedGrandWinner!.bookId}",
+                            style: const TextStyle(color: Colors.grey, fontSize: 14),
+                          ),
+                        ],
+                      )
+                    // Waiting state
+                    else
+                      const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.casino_outlined, size: 60, color: Colors.white38),
+                          SizedBox(height: 16),
+                          Text(
+                            "READY TO DRAW",
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 2,
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
                 ),
               ),
-            ]
-          ],
+              const SizedBox(height: 36),
+
+              // Controls
+              if (!_isCountingDown && _grandPrizeWinners.length < 5)
+                SizedBox(
+                  width: 250,
+                  height: 56,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.amber.shade600,
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      elevation: 6,
+                    ),
+                    onPressed: _drawNextGrandPrize,
+                    icon: const Icon(Icons.play_arrow, size: 24),
+                    label: Text(
+                      _revealedGrandWinner == null ? "DRAW GRAND PRIZE" : "DRAW NEXT PRIZE",
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 1),
+                    ),
+                  ),
+                ),
+
+              const SizedBox(height: 48),
+
+              // Progress Indicators showing drawn grand prizes
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(5, (index) {
+                  final isDrawn = index < _grandPrizeWinners.length;
+                  return Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 8),
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: isDrawn ? Colors.amber.shade700 : const Color(0xFF1E293B),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.amber.shade700, width: 2),
+                    ),
+                    child: Center(
+                      child: isDrawn
+                          ? const Icon(Icons.star, color: Colors.white, size: 20)
+                          : Text(
+                              (index + 1).toString(),
+                              style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold),
+                            ),
+                    ),
+                  );
+                }),
+              ),
+
+              if (_grandPrizeWinners.length == 5) ...[
+                const SizedBox(height: 32),
+                SizedBox(
+                  width: 300,
+                  height: 50,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade600,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: _isSyncing ? null : _syncDrawResults,
+                    icon: _isSyncing
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                          )
+                        : const Icon(Icons.cloud_done),
+                    label: const Text(
+                      "SYNC DRAW RESULTS TO CLOUD",
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              ]
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildAllFinishedState() {
-    return Center(
-      child: SingleChildScrollView(
+    return SingleChildScrollView(
+      child: Center(
         child: Padding(
           padding: const EdgeInsets.all(32.0),
           child: Container(
@@ -897,14 +1002,60 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> with TickerProviderStat
 
                 const SizedBox(height: 24),
                 const Text(
-                  "🎟️ CONSOLATION WINNERS (SUMMARY) 🎟️",
-                  style: TextStyle(color: Colors.tealAccent, fontSize: 16, fontWeight: FontWeight.bold),
+                  "🎟️ CONSOLATION WINNERS 🎟️",
+                  style: TextStyle(color: Colors.tealAccent, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  "A total of ${_consolationWinners.length} consolation winners were drawn (1 winner for each of the active books). See Ticket Directory Dashboard for full details.",
-                  style: const TextStyle(color: Colors.white60, fontSize: 13),
-                  textAlign: TextAlign.center,
+                const SizedBox(height: 12),
+                Container(
+                  height: 260,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F172A),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.teal.shade800),
+                  ),
+                  child: GridView.builder(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: _activeBookIds.length,
+                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 180,
+                      childAspectRatio: 2.2,
+                      crossAxisSpacing: 10,
+                      mainAxisSpacing: 10,
+                    ),
+                    itemBuilder: (context, index) {
+                      final bookId = _activeBookIds[index];
+                      final winner = _consolationWinners[bookId];
+                      if (winner == null) return const SizedBox.shrink();
+                      return Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E293B),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.tealAccent.withOpacity(0.3)),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              "Book #$bookId",
+                              style: const TextStyle(color: Colors.tealAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              "Ticket #${winner.ticketNumber.toString().padLeft(4, '0')}",
+                              style: const TextStyle(color: Colors.white, fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 12),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _maskName(winner.buyerName),
+                              style: const TextStyle(color: Colors.white70, fontSize: 9, overflow: TextOverflow.ellipsis),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
                 ),
 
                 const SizedBox(height: 32),

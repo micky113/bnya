@@ -12,6 +12,7 @@ class AdminUploadScreen extends StatefulWidget {
 class _AdminUploadScreenState extends State<AdminUploadScreen> {
   final _formKey = GlobalKey<FormState>();
   final _ticketController = TextEditingController();
+  final _bookIdController = TextEditingController();
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
   
@@ -25,6 +26,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
   @override
   void dispose() {
     _ticketController.dispose();
+    _bookIdController.dispose();
     _nameController.dispose();
     _phoneController.dispose();
     _csvController.dispose();
@@ -39,6 +41,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
 
     try {
       final int ticketNum = int.parse(_ticketController.text.trim());
+      final int bookId = int.parse(_bookIdController.text.trim());
       final String name = _nameController.text.trim();
       final String phone = _phoneController.text.trim();
 
@@ -62,6 +65,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
       // Create ticket object
       final ticket = Ticket(
         ticketNumber: ticketNum,
+        bookId: bookId,
         buyerName: name,
         buyerPhone: phone,
         isSold: true,
@@ -78,6 +82,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
           ),
         );
         _ticketController.clear();
+        _bookIdController.clear();
         _nameController.clear();
         _phoneController.clear();
       }
@@ -115,7 +120,22 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
       for (String line in lines) {
         if (line.trim().isEmpty) continue;
         final List<String> parts = line.split(',');
-        if (parts.length >= 3) {
+        if (parts.length >= 4) {
+          final int? tNum = int.tryParse(parts[0].trim());
+          final int? bId = int.tryParse(parts[1].trim());
+          final String name = parts[2].trim();
+          final String phone = parts[3].trim();
+
+          if (tNum != null && tNum >= 1 && tNum <= 20000 && bId != null) {
+            parsedTickets.add(Ticket(
+              ticketNumber: tNum,
+              bookId: bId,
+              buyerName: name,
+              buyerPhone: phone,
+              isSold: true,
+            ));
+          }
+        } else if (parts.length == 3) {
           final int? tNum = int.tryParse(parts[0].trim());
           final String name = parts[1].trim();
           final String phone = parts[2].trim();
@@ -123,6 +143,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
           if (tNum != null && tNum >= 1 && tNum <= 20000) {
             parsedTickets.add(Ticket(
               ticketNumber: tNum,
+              bookId: ((tNum - 1) ~/ 100) + 1,
               buyerName: name,
               buyerPhone: phone,
               isSold: true,
@@ -132,7 +153,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
       }
 
       if (parsedTickets.isEmpty) {
-        throw Exception("No valid rows could be parsed. Format should be: ticketNumber,name,phone");
+        throw Exception("No valid rows could be parsed. Format: ticketNumber,bookId,buyerName,buyerPhone OR ticketNumber,buyerName,buyerPhone");
       }
 
       final FirebaseFirestore firestore = FirebaseFirestore.instance;
@@ -208,9 +229,10 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
     for (int i = 0; i < 500; i++) {
       final int ticketNum = start + i;
       if (ticketNum > 20000) break;
+      final int bookId = ((ticketNum - 1) ~/ 100) + 1;
       final String name = mockNames[i % mockNames.length] + " ${100 + i}";
       final String phone = "98765${(10000 + i).toString().substring(1)}";
-      sb.writeln("$ticketNum,$name,$phone");
+      sb.writeln("$ticketNum,$bookId,$name,$phone");
     }
 
     setState(() {
@@ -225,6 +247,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width > 900;
+    final isMobile = MediaQuery.of(context).size.width < 600;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F9FA),
@@ -239,7 +262,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
       ),
       body: SingleChildScrollView(
         child: Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: EdgeInsets.all(isMobile ? 12.0 : 24.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -247,33 +270,35 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
               Card(
                 color: const Color(0xFF00695C),
                 child: Padding(
-                  padding: const EdgeInsets.all(24.0),
+                  padding: EdgeInsets.all(isMobile ? 16.0 : 24.0),
                   child: Row(
                     children: [
-                      const CircleAvatar(
+                      CircleAvatar(
                         backgroundColor: Colors.white24,
-                        radius: 28,
-                        child: Icon(Icons.app_registration, color: Colors.white, size: 30),
+                        radius: isMobile ? 22 : 28,
+                        child: Icon(Icons.app_registration, color: Colors.white, size: isMobile ? 24 : 30),
                       ),
-                      const SizedBox(width: 20),
+                      SizedBox(width: isMobile ? 12 : 20),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              "Lottery Event Registration Panel",
+                            Text(
+                              "Lottery Registration Panel",
                               style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 22,
+                                fontSize: isMobile ? 18 : 22,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              "Register sold tickets into Cloud Firestore. Tickets range from 1 to 20,000. Book ID is automatically calculated.",
+                              isMobile
+                                  ? "Register sold tickets. Range: 1 - 20,000. Book ID is automatic."
+                                  : "Register sold tickets into Cloud Firestore. Tickets range from 1 to 20,000. Book ID is automatically calculated.",
                               style: TextStyle(
                                 color: Colors.teal.shade100,
-                                fontSize: 14,
+                                fontSize: isMobile ? 12 : 14,
                               ),
                             ),
                           ],
@@ -311,9 +336,10 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
   }
 
   Widget _buildManualFormCard() {
+    final isMobile = MediaQuery.of(context).size.width < 600;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(24.0),
+        padding: EdgeInsets.all(isMobile ? 16.0 : 24.0),
         child: Form(
           key: _formKey,
           child: Column(
@@ -354,6 +380,35 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
                   }
                   if (num < 1 || num > 20000) {
                     return "Number must be between 1 and 20,000";
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+
+              // Book ID field
+              const Text(
+                "Book ID (Manual Registration)",
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+              ),
+              const SizedBox(height: 6),
+              TextFormField(
+                controller: _bookIdController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  hintText: "Enter Book ID e.g. 15",
+                  prefixIcon: Icon(Icons.book_outlined),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return "Book ID is required";
+                  }
+                  final int? num = int.tryParse(value.trim());
+                  if (num == null) {
+                    return "Enter a valid integer";
+                  }
+                  if (num < 1) {
+                    return "Book ID must be greater than 0";
                   }
                   return null;
                 },
@@ -441,31 +496,60 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
   }
 
   Widget _buildBulkUploadCard() {
+    final isMobile = MediaQuery.of(context).size.width < 600;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(24.0),
+        padding: EdgeInsets.all(isMobile ? 16.0 : 24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                const Icon(Icons.cloud_upload_outlined, color: Color(0xFF0277BD)),
-                const SizedBox(width: 10),
-                const Text(
-                  "Bulk CSV Upload Simulation",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: _isUploadingBulk ? null : _generateMockCSV,
-                  icon: const Icon(Icons.build_outlined, size: 16),
-                  label: const Text("Generate Mock CSV"),
-                  style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFF0277BD),
+            isMobile
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.cloud_upload_outlined, color: Color(0xFF0277BD)),
+                          SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              "Bulk CSV Upload",
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        onPressed: _isUploadingBulk ? null : _generateMockCSV,
+                        icon: const Icon(Icons.build_outlined, size: 16),
+                        label: const Text("Generate Mock CSV"),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF0277BD),
+                          side: const BorderSide(color: Color(0xFF0277BD)),
+                        ),
+                      )
+                    ],
+                  )
+                : Row(
+                    children: [
+                      const Icon(Icons.cloud_upload_outlined, color: Color(0xFF0277BD)),
+                      const SizedBox(width: 10),
+                      const Text(
+                        "Bulk CSV Upload Simulation",
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      const Spacer(),
+                      TextButton.icon(
+                        onPressed: _isUploadingBulk ? null : _generateMockCSV,
+                        icon: const Icon(Icons.build_outlined, size: 16),
+                        label: const Text("Generate Mock CSV"),
+                        style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFF0277BD),
+                        ),
+                      )
+                    ],
                   ),
-                )
-              ],
-            ),
             const Divider(height: 24),
             const Text(
               "Paste CSV rows in the format: ticketNumber, buyerName, buyerPhone (one per line)",

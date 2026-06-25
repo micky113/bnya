@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:bnya/view/lottery/admin_upload_screen.dart';
 import 'package:bnya/view/lottery/ticket_directory_screen.dart';
 import 'package:bnya/view/lottery/live_draw_screen.dart';
+import 'package:bnya/view/lottery/winners_screen.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -275,6 +276,8 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 700;
+
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
@@ -294,8 +297,9 @@ class _HomePageState extends State<HomePage> {
         foregroundColor: Colors.blue[900],
         elevation: 1,
         actions: [
+          // 1. LOTTERY BUTTON
           Padding(
-            padding: const EdgeInsets.only(right: 16.0),
+            padding: EdgeInsets.only(right: isMobile ? 8.0 : 16.0),
             child: PopupMenuButton<String>(
               onSelected: (value) {
                 Widget screen;
@@ -308,6 +312,9 @@ class _HomePageState extends State<HomePage> {
                     break;
                   case 'draw':
                     screen = const LiveDrawScreen();
+                    break;
+                  case 'winners':
+                    screen = const WinnersScreen();
                     break;
                   default:
                     return;
@@ -348,9 +355,19 @@ class _HomePageState extends State<HomePage> {
                     ],
                   ),
                 ),
+                const PopupMenuItem<String>(
+                  value: 'winners',
+                  child: Row(
+                    children: [
+                      Icon(Icons.emoji_events, color: Colors.orange, size: 20),
+                      SizedBox(width: 10),
+                      Text("Lottery Winners"),
+                    ],
+                  ),
+                ),
               ],
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: EdgeInsets.symmetric(horizontal: isMobile ? 8.0 : 16.0, vertical: 8.0),
                 decoration: BoxDecoration(
                   color: Colors.amber.shade50,
                   borderRadius: BorderRadius.circular(20),
@@ -360,16 +377,18 @@ class _HomePageState extends State<HomePage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(Icons.local_activity_outlined, color: Colors.amber.shade900, size: 16),
-                    const SizedBox(width: 8),
-                    Text(
-                      "LOTTERY 🎟️",
-                      style: TextStyle(
-                        color: Colors.amber.shade900,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                        letterSpacing: 0.5,
+                    if (!isMobile) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        "LOTTERY 🎟️",
+                        style: TextStyle(
+                          color: Colors.amber.shade900,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                          letterSpacing: 0.5,
+                        ),
                       ),
-                    ),
+                    ],
                     const SizedBox(width: 4),
                     Icon(Icons.arrow_drop_down, color: Colors.amber.shade900, size: 16),
                   ],
@@ -377,42 +396,67 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
+          
+          // 2. STAFF LOGIN BUTTON
           Padding(
-            padding: const EdgeInsets.only(right: 16.0),
-            child: TextButton.icon(
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.blue[800],
-                backgroundColor: Colors.blue[50],
-              ),
-              icon: const Icon(Icons.security, size: 18),
-              label: const Text("Staff Login"),
-              onPressed: _handleAdminLogin,
-            ),
+            padding: EdgeInsets.only(right: isMobile ? 8.0 : 16.0),
+            child: isMobile
+                ? IconButton(
+                    tooltip: "Staff Login",
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.blue[50],
+                      foregroundColor: Colors.blue[800],
+                    ),
+                    icon: const Icon(Icons.security, size: 18),
+                    onPressed: _handleAdminLogin,
+                  )
+                : TextButton.icon(
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.blue[800],
+                      backgroundColor: Colors.blue[50],
+                    ),
+                    icon: const Icon(Icons.security, size: 18),
+                    label: const Text("Staff Login"),
+                    onPressed: _handleAdminLogin,
+                  ),
           ),
+          
+          // 3. ADMIN ACCESS BUTTON
           Padding(
-            padding: const EdgeInsets.only(right: 16.0),
-            child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.blue[900],
-                backgroundColor: Colors.transparent,
-                side: BorderSide(color: Colors.blue.shade200, width: 1.5),
-                shape: const StadiumBorder(), // Pill shape
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-              ),
-              icon: Icon(Icons.lock_outline, size: 16, color: Colors.blue[800]),
-              label: const Text(
-                "ADMIN ACCESS",
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
-                  letterSpacing: 0.5,
-                ),
-              ),
-              onPressed: _handleAccountantLogin,
-            ),
+            padding: EdgeInsets.only(right: isMobile ? 12.0 : 16.0),
+            child: isMobile
+                ? IconButton(
+                    tooltip: "Admin Access",
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      foregroundColor: Colors.blue[900],
+                      side: BorderSide(color: Colors.blue.shade200, width: 1.5),
+                    ),
+                    icon: const Icon(Icons.lock_outline, size: 18),
+                    onPressed: _handleAccountantLogin,
+                  )
+                : OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.blue[900],
+                      backgroundColor: Colors.transparent,
+                      side: BorderSide(color: Colors.blue.shade200, width: 1.5),
+                      shape: const StadiumBorder(), // Pill shape
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                    ),
+                    icon: Icon(Icons.lock_outline, size: 16, color: Colors.blue[800]),
+                    label: const Text(
+                      "ADMIN ACCESS",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    onPressed: _handleAccountantLogin,
+                  ),
           ),
         ],
       ),

@@ -252,21 +252,103 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
   Widget _buildSearchFilterRow() {
     final isMobile = MediaQuery.of(context).size.width < 700;
 
+    if (isMobile) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                controller: _searchController,
+                onChanged: (val) {
+                  setState(() {
+                    _searchQuery = val;
+                    _currentPage = 1;
+                  });
+                },
+                decoration: InputDecoration(
+                  hintText: "Search by Name, Phone, Ticket # or Book ID...",
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() {
+                              _searchQuery = "";
+                              _currentPage = 1;
+                            });
+                          },
+                        )
+                      : null,
+                  fillColor: Colors.grey.shade50,
+                  filled: true,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _selectedFilter,
+                    isExpanded: true,
+                    icon: const Icon(Icons.filter_list, color: Color(0xFF00695C)),
+                    onChanged: (String? newValue) {
+                      if (newValue != null) {
+                        setState(() {
+                          _selectedFilter = newValue;
+                          _currentPage = 1;
+                        });
+                      }
+                    },
+                    items: <String>[
+                      'All',
+                      'Sold',
+                      'Consolation',
+                      'Grand',
+                      'Winners'
+                    ].map<DropdownMenuItem<String>>((String value) {
+                      String display = value;
+                      if (value == "Sold") display = "Sold (No Prizes)";
+                      if (value == "Consolation") display = "Consolation Winners";
+                      if (value == "Grand") display = "Grand Prize Winners";
+                      if (value == "Winners") display = "All Winners";
+                      return DropdownMenuItem<String>(
+                        value: value,
+                        child: Text(
+                          display,
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-        child: Flex(
-          direction: isMobile ? Axis.vertical : Axis.horizontal,
+        child: Row(
           children: [
-            // Search Input
             Expanded(
-              flex: isMobile ? 0 : 3,
+              flex: 3,
               child: TextField(
                 controller: _searchController,
                 onChanged: (val) {
                   setState(() {
                     _searchQuery = val;
-                    _currentPage = 1; // reset page on search
+                    _currentPage = 1;
                   });
                 },
                 decoration: InputDecoration(
@@ -289,8 +371,7 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                 ),
               ),
             ),
-            if (isMobile) const SizedBox(height: 12) else const SizedBox(width: 16),
-            // Filter Dropdown
+            const SizedBox(width: 16),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(
@@ -306,7 +387,7 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                     if (newValue != null) {
                       setState(() {
                         _selectedFilter = newValue;
-                        _currentPage = 1; // reset page on filter change
+                        _currentPage = 1;
                       });
                     }
                   },
@@ -333,37 +414,34 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                 ),
               ),
             ),
-            if (!isMobile) ...[
-              const SizedBox(width: 16),
-              // Rows per page dropdown
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade300),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<int>(
-                    value: _rowsPerPage,
-                    onChanged: (int? newValue) {
-                      if (newValue != null) {
-                        setState(() {
-                          _rowsPerPage = newValue;
-                          _currentPage = 1;
-                        });
-                      }
-                    },
-                    items: <int>[5, 10, 25, 50].map<DropdownMenuItem<int>>((int value) {
-                      return DropdownMenuItem<int>(
-                        value: value,
-                        child: Text("$value rows"),
-                      );
-                    }).toList(),
-                  ),
+            const SizedBox(width: 16),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<int>(
+                  value: _rowsPerPage,
+                  onChanged: (int? newValue) {
+                    if (newValue != null) {
+                      setState(() {
+                        _rowsPerPage = newValue;
+                        _currentPage = 1;
+                      });
+                    }
+                  },
+                  items: <int>[5, 10, 25, 50].map<DropdownMenuItem<int>>((int value) {
+                    return DropdownMenuItem<int>(
+                      value: value,
+                      child: Text("$value rows"),
+                    );
+                  }).toList(),
                 ),
               ),
-            ],
+            ),
           ],
         ),
       ),

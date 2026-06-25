@@ -9,18 +9,21 @@ class Ticket {
 
   Ticket({
     required this.ticketNumber,
+    required this.bookId,
     required this.buyerName,
     required this.buyerPhone,
     this.isSold = false,
     this.hasWonConsolation = false,
     this.hasWonGrandPrize = false,
-  }) : bookId = ((ticketNumber - 1) ~/ 100) + 1;
+  });
 
   // Constructor to create a Ticket from a Map (Firestore data)
   factory Ticket.fromMap(Map<String, dynamic> map, String docId) {
     final tNum = int.tryParse(docId) ?? (map['ticketNumber'] as int? ?? 0);
+    final bId = map['bookId'] as int? ?? (((tNum - 1) ~/ 100) + 1);
     return Ticket(
       ticketNumber: tNum,
+      bookId: bId,
       buyerName: map['buyerName'] ?? '',
       buyerPhone: map['buyerPhone'] ?? '',
       isSold: map['isSold'] ?? false,
@@ -45,6 +48,7 @@ class Ticket {
   // Clone with changes
   Ticket copyWith({
     int? ticketNumber,
+    int? bookId,
     String? buyerName,
     String? buyerPhone,
     bool? isSold,
@@ -53,6 +57,7 @@ class Ticket {
   }) {
     return Ticket(
       ticketNumber: ticketNumber ?? this.ticketNumber,
+      bookId: bookId ?? this.bookId,
       buyerName: buyerName ?? this.buyerName,
       buyerPhone: buyerPhone ?? this.buyerPhone,
       isSold: isSold ?? this.isSold,
