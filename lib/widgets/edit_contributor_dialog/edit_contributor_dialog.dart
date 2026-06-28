@@ -18,7 +18,12 @@ class _EditContributorDialogState extends State<EditContributorDialog> {
   final AuthService _authService = AuthService(); // Auth Instance
 
   // Allowed Admin Emails
-  final List<String> _adminEmails = ["mohanty747@gmail.com"];
+  final List<String> _adminEmails = [
+    "mohanty747@gmail.com",
+    "treasurer@society.com",
+    "utkalspace@gmail.com",
+    "mishra.debidatta@gmail.com",
+  ];
 
   // Controllers
   late TextEditingController _nameController;

@@ -33,8 +33,7 @@ class _ContributorDirectoryScreenState
   final List<String> _paymentTypes = [
     'Kalash',
     'Coupon',
-    'SBI',
-    'HDFC',
+    'Cheque',
     'Others',
   ];
   final LatLng _screenCenter = const LatLng(20.2613, 85.8344); // Track center
@@ -53,6 +52,8 @@ class _ContributorDirectoryScreenState
   final List<String> _adminEmails = [
     "mohanty747@gmail.com",
     "treasurer@society.com",
+    "utkalspace@gmail.com",
+    "mishra.debidatta@gmail.com",
   ];
 
   // Search State
@@ -556,8 +557,17 @@ class _ContributorDirectoryScreenState
                                 String subText = _dateFormat.format(
                                   payment.date,
                                 );
-                                if (payment.referenceId.isNotEmpty)
-                                  subText += "\nRef: ${payment.referenceId}";
+                                  if (payment.referenceId.isNotEmpty) {
+                                    subText += "\nRef: ${payment.referenceId}";
+                                  }
+                                  if (payment.remarks.isNotEmpty) {
+                                    final parsedTickets = _parseTicketNumbers(payment.remarks);
+                                    if (parsedTickets.isNotEmpty) {
+                                      subText += "\nTickets: ${parsedTickets.map((t) => '#${t.toString().padLeft(4, '0')}').join(', ')}";
+                                    } else {
+                                      subText += "\nRemarks: ${payment.remarks}";
+                                    }
+                                  }
 
                                 return ListTile(
                                   dense: true,
@@ -707,6 +717,7 @@ class _ContributorDirectoryScreenState
   void _showAddPaymentDialog(BuildContext context, Contributor contributor) {
     final amountController = TextEditingController();
     final referenceController = TextEditingController();
+    final ticketsController = TextEditingController();
     String selectedType = 'Kalash';
     bool isLoading = false;
 
@@ -783,17 +794,28 @@ class _ContributorDirectoryScreenState
                               )
                               .toList(),
                     ),
+                    const SizedBox(height: 20),
+                    TextField(
+                      controller: ticketsController,
+                      decoration: const InputDecoration(
+                        labelText: 'Lottery Ticket Numbers(eg: A2001-A2100)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
                     if (showRefField) ...[
                       const SizedBox(height: 20),
                       TextField(
                         controller: referenceController,
-                        decoration: const InputDecoration(
-                          labelText: "Cheque/Coupon/UTR No",
-                          border: OutlineInputBorder(),
+                        decoration: InputDecoration(
+                          labelText: selectedType == 'Coupon'
+                              ? 'Coupon No'
+                              : selectedType == 'Cheque'
+                                  ? 'Cheque No'
+                                  : 'UTR No',
+                          border: const OutlineInputBorder(),
                         ),
                       ),
                       const SizedBox(height: 20),
-
                       Row(
                         children: [
                           Expanded(
@@ -813,7 +835,6 @@ class _ContributorDirectoryScreenState
                           ),
                         ],
                       ),
-
                       if (_selectedImageBytes != null)
                         Padding(
                           padding: const EdgeInsets.only(top: 10),
@@ -832,10 +853,9 @@ class _ContributorDirectoryScreenState
                                     Icons.close,
                                     color: Colors.red,
                                   ),
-                                  onPressed:
-                                      () => setSheetState(
-                                        () => _selectedImageBytes = null,
-                                      ),
+                                  onPressed: () => setSheetState(
+                                    () => _selectedImageBytes = null,
+                                  ),
                                   style: IconButton.styleFrom(
                                     backgroundColor: Colors.white,
                                   ),
@@ -910,6 +930,7 @@ class _ContributorDirectoryScreenState
                                     type: selectedType,
                                     referenceId:
                                         referenceController.text.trim(),
+                                    remarks: ticketsController.text.trim(),
                                     imageUrl: uploadedImageUrl,
                                   );
 
@@ -919,12 +940,72 @@ class _ContributorDirectoryScreenState
                                         newPayment,
                                       ].map((e) => e.toMap()).toList();
 
-                                  await FirebaseFirestore.instance
-                                      .collection('contributors')
-                                      .doc(contributor.id)
-                                      .update({
-                                        'paymentHistory': updatedHistory,
-                                      });
+                                  final firestore = FirebaseFirestore.instance;
+
+                                  // Parse and validate tickets for duplicates
+                                  final List<int> tickets = _parseTicketNumbers(ticketsController.text);
+                                  if (tickets.isNotEmpty) {
+                                    final List<DocumentSnapshot> snaps = await Future.wait(
+                                      tickets.map((t) => firestore.collection('tickets').doc(t.toString()).get())
+                                    );
+                                    final List<int> duplicateTickets = [];
+                                    for (final snap in snaps) {
+                                      if (snap.exists) {
+                                        final int? existingNum = int.tryParse(snap.id);
+                                        if (existingNum != null) {
+                                          duplicateTickets.add(existingNum);
+                                        }
+                                      }
+                                    }
+                                    if (duplicateTickets.isNotEmpty) {
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text("Error: Ticket(s) #${duplicateTickets.join(', ')} already registered!"),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                      }
+                                      setSheetState(() => isLoading = false);
+                                      return;
+                                    }
+                                  }
+
+                                  final batch = firestore.batch();
+
+                                  final contributorRef = firestore.collection('contributors').doc(contributor.id);
+                                  batch.update(contributorRef, {
+                                    'paymentHistory': updatedHistory,
+                                  });
+
+                                  final ledgerRef = firestore.collection('ledger').doc();
+                                  batch.set(ledgerRef, {
+                                    'type': 'income',
+                                    'date': Timestamp.now(),
+                                    'voucher': 'Collection: ${contributor.name} (${contributor.id})',
+                                    'cash': amount,
+                                    'bankSbi': 0.0,
+                                    'bankHdfc': 0.0,
+                                    'sheetRowId': DateTime.now().millisecondsSinceEpoch,
+                                    'createdAt': FieldValue.serverTimestamp(),
+                                  });
+
+                                  // Register the tickets in Firestore
+                                  for (final tNum in tickets) {
+                                    final int bookId = ((tNum - 1) ~/ 100) + 1;
+                                    final ticketRef = firestore.collection('tickets').doc(tNum.toString());
+                                    batch.set(ticketRef, {
+                                      'ticketNumber': tNum,
+                                      'bookId': bookId,
+                                      'buyerName': contributor.name,
+                                      'buyerPhone': contributor.contactNumber,
+                                      'isSold': true,
+                                      'hasWonConsolation': false,
+                                      'hasWonGrandPrize': false,
+                                    }, SetOptions(merge: true));
+                                  }
+
+                                  await batch.commit();
 
                                   if (mounted) Navigator.pop(context);
                                 },
@@ -955,4 +1036,33 @@ class _ContributorDirectoryScreenState
       },
     );
   }
+}
+
+List<int> _parseTicketNumbers(String input) {
+  final List<int> results = [];
+  final parts = input.split(',');
+  for (var part in parts) {
+    part = part.trim();
+    if (part.isEmpty) continue;
+
+    final rangeMatch = RegExp(r'[a-zA-Z]*\s*(\d+)\s*(?:-|to)\s*[a-zA-Z]*\s*(\d+)').firstMatch(part);
+    if (rangeMatch != null) {
+      final start = int.tryParse(rangeMatch.group(1)!) ?? 0;
+      final end = int.tryParse(rangeMatch.group(2)!) ?? 0;
+      if (start > 0 && end >= start) {
+        for (int i = start; i <= end; i++) {
+          results.add(i);
+        }
+      }
+    } else {
+      final numberMatch = RegExp(r'\d+').firstMatch(part);
+      if (numberMatch != null) {
+        final numVal = int.tryParse(numberMatch.group(0)!) ?? 0;
+        if (numVal > 0) {
+          results.add(numVal);
+        }
+      }
+    }
+  }
+  return results.toSet().toList();
 }

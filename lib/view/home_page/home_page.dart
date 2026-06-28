@@ -24,6 +24,8 @@ class _HomePageState extends State<HomePage> {
   final List<String> allowedEmails = [
     "mohanty747@gmail.com",
     "treasurer@society.com",
+    "utkalspace@gmail.com",
+    "mishra.debidatta@gmail.com",
   ];
 
   String _formatCurrency(double amount) {
@@ -216,62 +218,22 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // Admin Login Logic
-  Future<void> _handleAdminLogin() async {
-    User? user = _authService.currentUser;
-    if (user == null) {
-      user = await _authService.signInWithGoogle();
-    }
-    if (user == null) return;
-
-    if (allowedEmails.contains(user.email)) {
-      if (mounted) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const ContributorDirectoryScreen(),
-          ),
-        );
-      }
-    } else {
-      await _authService.signOut();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Access Denied. Admin only."),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
+  // Navigation to Contributor Directory
+  void _navigateToContributorDirectory() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const ContributorDirectoryScreen(),
+      ),
+    );
   }
 
-  //Accountant Login Logic
-  Future<void> _handleAccountantLogin() async {
-    User? user = _authService.currentUser;
-    if (user == null) {
-      user = await _authService.signInWithGoogle();
-    }
-    if (user == null) return;
-
-    if (allowedEmails.contains(user.email)) {
-      if (mounted) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => const LedgerScreen()),
-        );
-      }
-    } else {
-      await _authService.signOut();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Access Denied. Admin only."),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
+  // Navigation to Financial Ledger
+  void _navigateToLedger() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const LedgerScreen()),
+    );
   }
 
   @override
@@ -397,43 +359,43 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
           
-          // 2. STAFF LOGIN BUTTON
+          // 2. CONTRIBUTOR DIRECTORY BUTTON
           Padding(
             padding: EdgeInsets.only(right: isMobile ? 8.0 : 16.0),
             child: isMobile
                 ? IconButton(
-                    tooltip: "Staff Login",
+                    tooltip: "Contributor Directory",
                     style: IconButton.styleFrom(
                       backgroundColor: Colors.blue[50],
                       foregroundColor: Colors.blue[800],
                     ),
-                    icon: const Icon(Icons.security, size: 18),
-                    onPressed: _handleAdminLogin,
+                    icon: const Icon(Icons.people_outline, size: 18),
+                    onPressed: _navigateToContributorDirectory,
                   )
                 : TextButton.icon(
                     style: TextButton.styleFrom(
                       foregroundColor: Colors.blue[800],
                       backgroundColor: Colors.blue[50],
                     ),
-                    icon: const Icon(Icons.security, size: 18),
-                    label: const Text("Staff Login"),
-                    onPressed: _handleAdminLogin,
+                    icon: const Icon(Icons.people_outline, size: 18),
+                    label: const Text("Contributor Directory"),
+                    onPressed: _navigateToContributorDirectory,
                   ),
           ),
           
-          // 3. ADMIN ACCESS BUTTON
+          // 3. FINANCIAL LEDGER BUTTON
           Padding(
             padding: EdgeInsets.only(right: isMobile ? 12.0 : 16.0),
             child: isMobile
                 ? IconButton(
-                    tooltip: "Admin Access",
+                    tooltip: "Financial Ledger",
                     style: IconButton.styleFrom(
                       backgroundColor: Colors.transparent,
                       foregroundColor: Colors.blue[900],
                       side: BorderSide(color: Colors.blue.shade200, width: 1.5),
                     ),
-                    icon: const Icon(Icons.lock_outline, size: 18),
-                    onPressed: _handleAccountantLogin,
+                    icon: const Icon(Icons.account_balance_wallet_outlined, size: 18),
+                    onPressed: _navigateToLedger,
                   )
                 : OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
@@ -446,16 +408,16 @@ class _HomePageState extends State<HomePage> {
                         vertical: 8,
                       ),
                     ),
-                    icon: Icon(Icons.lock_outline, size: 16, color: Colors.blue[800]),
+                    icon: Icon(Icons.account_balance_wallet_outlined, size: 16, color: Colors.blue[800]),
                     label: const Text(
-                      "ADMIN ACCESS",
+                      "FINANCIAL LEDGER",
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
                         letterSpacing: 0.5,
                       ),
                     ),
-                    onPressed: _handleAccountantLogin,
+                    onPressed: _navigateToLedger,
                   ),
           ),
         ],

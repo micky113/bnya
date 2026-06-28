@@ -16,14 +16,357 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
   int _currentPage = 1;
   int _rowsPerPage = 10;
 
+  bool _isLoadingAllPage = false;
+  bool _isLoadingMetrics = false;
+  List<Ticket> _allTicketsPage = []; // Current page tickets
+  int _totalAllCount = 0; // Total matching tickets count
+
+  int _totalSold = 0;
+  int _activeBooks = 0;
+  int _totalPrizes = 0;
+
+  final List<DocumentSnapshot> _pageStartDocs = [];
+  Map<String, List<int>> _ticketsByPhone = {};
+  final Map<String, List<int>> _ticketsByName = {}; // Kept for method compatibility
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMetrics();
+    _loadTicketsPage();
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
   }
 
+  Future<void> _loadMetrics() async {
+    if (mounted) {
+      setState(() {
+        _isLoadingMetrics = true;
+      });
+    }
+
+    try {
+      final firestore = FirebaseFirestore.instance;
+
+      // Parallelized index-free count queries
+      final results = await Future.wait([
+        firestore.collection('tickets').where('isSold', isEqualTo: true).count().get(),
+        firestore.collection('tickets').where('hasWonConsolation', isEqualTo: true).count().get(),
+        firestore.collection('tickets').where('hasWonGrandPrize', isEqualTo: true).count().get(),
+      ]);
+
+      final soldCount = results[0].count ?? 0;
+      final consolationCount = results[1].count ?? 0;
+      final grandCount = results[2].count ?? 0;
+
+      // Active Books logic:
+      // If consolation winner draws have run, activeBooks matches consolation winners count.
+      // Else, estimate active books mathematically based on soldCount.
+      int activeBooksCount = consolationCount;
+      if (activeBooksCount == 0 && soldCount > 0) {
+        activeBooksCount = (soldCount / 100).ceil().clamp(1, 200);
+      }
+
+      if (mounted) {
+        setState(() {
+          _totalSold = soldCount;
+          _activeBooks = activeBooksCount;
+          _totalPrizes = consolationCount + grandCount;
+          _isLoadingMetrics = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Error loading metrics: $e");
+      if (mounted) {
+        setState(() {
+          _isLoadingMetrics = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadTicketsPage() async {
+    if (mounted) {
+      setState(() {
+        _isLoadingAllPage = true;
+      });
+    }
+
+    try {
+      final firestore = FirebaseFirestore.instance;
+      final term = _searchQuery.trim().toLowerCase();
+      final hasSearch = term.isNotEmpty;
+
+      // Case A: Default view (No active text search query)
+      if (!hasSearch) {
+        Query query = firestore.collection('tickets');
+
+        if (_selectedFilter == "Sold") {
+          query = query.where('isSold', isEqualTo: true);
+        } else if (_selectedFilter == "Consolation") {
+          query = query.where('hasWonConsolation', isEqualTo: true);
+        } else if (_selectedFilter == "Grand") {
+          query = query.where('hasWonGrandPrize', isEqualTo: true);
+        }
+
+        // Fetch all consolation/grand/winners in memory for simple client pagination (since counts are small)
+        if (_selectedFilter == "Winners") {
+          final results = await Future.wait([
+            firestore.collection('tickets').where('hasWonConsolation', isEqualTo: true).get(),
+            firestore.collection('tickets').where('hasWonGrandPrize', isEqualTo: true).get(),
+          ]);
+          final List<DocumentSnapshot> docs = [];
+          docs.addAll(results[0].docs);
+          docs.addAll(results[1].docs);
+
+          var allMatched = docs.map((doc) => Ticket.fromMap(doc.data() as Map<String, dynamic>, doc.id)).toList();
+          final Map<int, Ticket> uniqueMap = {};
+          for (var t in allMatched) {
+            uniqueMap[t.ticketNumber] = t;
+          }
+          allMatched = uniqueMap.values.toList();
+          allMatched.sort((a, b) => a.ticketNumber.compareTo(b.ticketNumber));
+
+          if (mounted) {
+            setState(() {
+              _totalAllCount = allMatched.length;
+              final int startRow = (_currentPage - 1) * _rowsPerPage;
+              int endRow = startRow + _rowsPerPage;
+              if (endRow > _totalAllCount) endRow = _totalAllCount;
+
+              _allTicketsPage = (startRow < _totalAllCount) ? allMatched.sublist(startRow, endRow) : [];
+              _isLoadingAllPage = false;
+            });
+            _loadOtherTicketsForPage(_allTicketsPage);
+          }
+          return;
+        } else if (_selectedFilter == "Consolation" || _selectedFilter == "Grand") {
+          final snap = await query.get();
+          var allMatched = snap.docs.map((doc) => Ticket.fromMap(doc.data() as Map<String, dynamic>, doc.id)).toList();
+          allMatched.sort((a, b) => a.ticketNumber.compareTo(b.ticketNumber));
+
+          if (mounted) {
+            setState(() {
+              _totalAllCount = allMatched.length;
+              final int startRow = (_currentPage - 1) * _rowsPerPage;
+              int endRow = startRow + _rowsPerPage;
+              if (endRow > _totalAllCount) endRow = _totalAllCount;
+
+              _allTicketsPage = (startRow < _totalAllCount) ? allMatched.sublist(startRow, endRow) : [];
+              _isLoadingAllPage = false;
+            });
+            _loadOtherTicketsForPage(_allTicketsPage);
+          }
+          return;
+        }
+
+        // Standard paginated list for "All" or "Sold" categories
+        final countSnap = await query.count().get();
+        final totalCount = countSnap.count ?? 0;
+
+        query = query.orderBy('ticketNumber');
+
+        if (_currentPage > 1 && _pageStartDocs.length >= _currentPage - 1) {
+          query = query.startAfterDocument(_pageStartDocs[_currentPage - 2]);
+        }
+
+        final snap = await query.limit(_rowsPerPage).get();
+
+        if (mounted) {
+          setState(() {
+            _totalAllCount = totalCount;
+            _allTicketsPage = snap.docs.map((doc) {
+              return Ticket.fromMap(doc.data() as Map<String, dynamic>, doc.id);
+            }).toList();
+
+            if (snap.docs.isNotEmpty) {
+              final lastDoc = snap.docs.last;
+              if (_pageStartDocs.length < _currentPage) {
+                _pageStartDocs.add(lastDoc);
+              } else {
+                _pageStartDocs[_currentPage - 1] = lastDoc;
+              }
+            }
+            _isLoadingAllPage = false;
+          });
+          _loadOtherTicketsForPage(_allTicketsPage);
+        }
+      }
+      // Case B: Search Query Active (perform server-side target lookup)
+      else {
+        final cleanNumeric = term.replaceAll(RegExp(r'[^0-9]'), '');
+        final intVal = int.tryParse(cleanNumeric);
+        List<DocumentSnapshot> docs = [];
+
+        final List<Future<dynamic>> futures = [];
+
+        // 1. Ticket Number exact match
+        if (intVal != null && intVal >= 1 && intVal <= 20000) {
+          futures.add(firestore.collection('tickets').doc(intVal.toString()).get());
+        }
+
+        // 2. Book ID match
+        if (intVal != null && intVal >= 1 && intVal <= 200) {
+          if (term.contains('b') || term.contains('book')) {
+            futures.add(
+              firestore.collection('tickets')
+                  .where('bookId', isEqualTo: intVal)
+                  .limit(100)
+                  .get()
+            );
+          }
+        }
+
+        // 3. Phone number prefix/exact match
+        if (cleanNumeric.isNotEmpty && cleanNumeric.length >= 3) {
+          futures.add(
+            firestore.collection('tickets')
+                .where('buyerPhone', isGreaterThanOrEqualTo: cleanNumeric)
+                .where('buyerPhone', isLessThanOrEqualTo: '$cleanNumeric\uf8ff')
+                .limit(100)
+                .get()
+          );
+        }
+
+        // 4. Buyer Name prefix match (if term contains letters or cleanNumeric is short)
+        final hasLetters = RegExp(r'[a-zA-Z]').hasMatch(term);
+        if (hasLetters || cleanNumeric.isEmpty || (cleanNumeric.length < 3 && term.isNotEmpty)) {
+          final queryTerm = _searchQuery.trim();
+          if (queryTerm.isNotEmpty) {
+            futures.add(
+              firestore.collection('tickets')
+                  .where('buyerName', isGreaterThanOrEqualTo: queryTerm)
+                  .where('buyerName', isLessThanOrEqualTo: '$queryTerm\uf8ff')
+                  .limit(100)
+                  .get()
+            );
+
+            // Search with capitalized version
+            final capitalized = '${queryTerm[0].toUpperCase()}${queryTerm.substring(1)}';
+            if (capitalized != queryTerm) {
+              futures.add(
+                firestore.collection('tickets')
+                    .where('buyerName', isGreaterThanOrEqualTo: capitalized)
+                    .where('buyerName', isLessThanOrEqualTo: '$capitalized\uf8ff')
+                    .limit(100)
+                    .get()
+              );
+            }
+
+            // Search lowercase version
+            final lowercase = queryTerm.toLowerCase();
+            if (lowercase != queryTerm && lowercase != capitalized) {
+              futures.add(
+                firestore.collection('tickets')
+                    .where('buyerName', isGreaterThanOrEqualTo: lowercase)
+                    .where('buyerName', isLessThanOrEqualTo: '$lowercase\uf8ff')
+                    .limit(100)
+                    .get()
+              );
+            }
+          }
+        }
+
+        final results = await Future.wait(futures);
+        for (final res in results) {
+          if (res is DocumentSnapshot) {
+            if (res.exists) {
+              docs.add(res);
+            }
+          } else if (res is QuerySnapshot) {
+            docs.addAll(res.docs);
+          }
+        }
+
+        var allMatched = docs.map((doc) => Ticket.fromMap(doc.data() as Map<String, dynamic>, doc.id)).toList();
+        final Map<int, Ticket> uniqueMap = {};
+        for (var t in allMatched) {
+          uniqueMap[t.ticketNumber] = t;
+        }
+        allMatched = uniqueMap.values.toList();
+        allMatched.sort((a, b) => a.ticketNumber.compareTo(b.ticketNumber));
+
+        // Filter search results dynamically by status category in memory
+        if (_selectedFilter == "Sold") {
+          allMatched = allMatched.where((t) => t.isSold && !t.hasWonConsolation && !t.hasWonGrandPrize).toList();
+        } else if (_selectedFilter == "Consolation") {
+          allMatched = allMatched.where((t) => t.hasWonConsolation).toList();
+        } else if (_selectedFilter == "Grand") {
+          allMatched = allMatched.where((t) => t.hasWonGrandPrize).toList();
+        } else if (_selectedFilter == "Winners") {
+          allMatched = allMatched.where((t) => t.hasWonConsolation || t.hasWonGrandPrize).toList();
+        }
+
+        if (mounted) {
+          setState(() {
+            _totalAllCount = allMatched.length;
+            final int startRow = (_currentPage - 1) * _rowsPerPage;
+            int endRow = startRow + _rowsPerPage;
+            if (endRow > _totalAllCount) endRow = _totalAllCount;
+
+            _allTicketsPage = (startRow < _totalAllCount) ? allMatched.sublist(startRow, endRow) : [];
+            _isLoadingAllPage = false;
+          });
+          _loadOtherTicketsForPage(_allTicketsPage);
+        }
+      }
+    } catch (e) {
+      debugPrint("Error loading tickets page: $e");
+      if (mounted) {
+        setState(() {
+          _isLoadingAllPage = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadOtherTicketsForPage(List<Ticket> pageTickets) async {
+    final firestore = FirebaseFirestore.instance;
+    final uniquePhones = pageTickets
+        .map((t) => t.buyerPhone.trim())
+        .where((p) => p.isNotEmpty)
+        .toSet()
+        .toList();
+
+    if (uniquePhones.isEmpty) return;
+
+    try {
+      final futures = uniquePhones.map((phone) {
+        return firestore.collection('tickets').where('buyerPhone', isEqualTo: phone).get();
+      });
+
+      final results = await Future.wait(futures);
+      final Map<String, List<int>> tempMap = {};
+
+      for (int i = 0; i < uniquePhones.length; i++) {
+        final phone = uniquePhones[i];
+        final snap = results[i];
+        final nums = snap.docs.map((d) => int.tryParse(d.id) ?? 0).where((n) => n > 0).toList();
+        tempMap[phone] = nums;
+      }
+
+      if (mounted) {
+        setState(() {
+          _ticketsByPhone = tempMap;
+        });
+      }
+    } catch (e) {
+      debugPrint("Error loading buyer tickets: $e");
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isDefaultAll = _selectedFilter == "All" && _searchQuery.isEmpty;
+    final totalPages = (_totalAllCount / _rowsPerPage).ceil();
+    final int startRow = (_currentPage - 1) * _rowsPerPage;
+    int endRow = startRow + _rowsPerPage;
+    if (endRow > _totalAllCount) endRow = _totalAllCount;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF5F9FA),
       appBar: AppBar(
@@ -34,118 +377,74 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
         backgroundColor: Colors.white,
         foregroundColor: const Color(0xFF00695C),
         elevation: 1,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: "Refresh Metrics & List",
+            onPressed: () {
+              _loadMetrics();
+              _loadTicketsPage();
+            },
+          ),
+        ],
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('tickets').snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return Center(child: Text("Error loading tickets: ${snapshot.error}"));
-          }
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      body: _isLoadingMetrics && _allTicketsPage.isEmpty
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Metrics Bar
+                    _buildMetricsRow(_totalSold, _activeBooks, _totalPrizes),
+                    const SizedBox(height: 24),
 
-          final allTickets = snapshot.data!.docs.map((doc) {
-            return Ticket.fromMap(doc.data() as Map<String, dynamic>, doc.id);
-          }).toList();
+                    // Search and Filter Bar
+                    _buildSearchFilterRow(),
+                    const SizedBox(height: 16),
 
-          // Sort tickets by number ascending
-          allTickets.sort((a, b) => a.ticketNumber.compareTo(b.ticketNumber));
-
-          // Metrics calculations
-          final totalSold = allTickets.where((t) => t.isSold).length;
-          final activeBooks = allTickets.where((t) => t.isSold).map((t) => t.bookId).toSet().length;
-          final consolationWinners = allTickets.where((t) => t.hasWonConsolation).length;
-          final grandWinners = allTickets.where((t) => t.hasWonGrandPrize).length;
-          final totalPrizes = consolationWinners + grandWinners;
-
-          // Apply filters and searches
-          final filteredTickets = allTickets.where((ticket) {
-            final query = _searchQuery.toLowerCase();
-            final matchesSearch = ticket.buyerName.toLowerCase().contains(query) ||
-                ticket.buyerPhone.contains(query) ||
-                ticket.ticketNumber.toString().contains(query) ||
-                ticket.bookId.toString().contains(query);
-
-            if (!matchesSearch) return false;
-
-            switch (_selectedFilter) {
-              case "Sold":
-                return ticket.isSold && !ticket.hasWonConsolation && !ticket.hasWonGrandPrize;
-              case "Consolation":
-                return ticket.hasWonConsolation;
-              case "Grand":
-                return ticket.hasWonGrandPrize;
-              case "Winners":
-                return ticket.hasWonConsolation || ticket.hasWonGrandPrize;
-              default:
-                return true;
-            }
-          }).toList();
-
-          // Pagination logic
-          final totalRows = filteredTickets.length;
-          final totalPages = (totalRows / _rowsPerPage).ceil();
-          final int startRow = (_currentPage - 1) * _rowsPerPage;
-          int endRow = startRow + _rowsPerPage;
-          if (endRow > totalRows) endRow = totalRows;
-
-          final pageTickets = (totalRows > 0)
-              ? filteredTickets.sublist(startRow, endRow)
-              : <Ticket>[];
-
-          return SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Metrics Bar
-                  _buildMetricsRow(totalSold, activeBooks, totalPrizes),
-                  const SizedBox(height: 24),
-
-                  // Search and Filter Bar
-                  _buildSearchFilterRow(),
-                  const SizedBox(height: 16),
-
-                  // Main Data Table Card
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (filteredTickets.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 48.0),
-                              child: Center(
-                                child: Text(
-                                  "No matching ticket records found.",
-                                  style: TextStyle(color: Colors.grey, fontSize: 16),
+                    // Main Data Table Card
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (_isLoadingAllPage && isDefaultAll)
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 48.0),
+                                child: Center(child: CircularProgressIndicator()),
+                              )
+                            else if (_allTicketsPage.isEmpty)
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 48.0),
+                                child: Center(
+                                  child: Text(
+                                    "No matching ticket records found.",
+                                    style: TextStyle(color: Colors.grey, fontSize: 16),
+                                  ),
                                 ),
-                              ),
-                            )
-                          else ...[
-                            _buildResponsiveTable(pageTickets),
-                            const SizedBox(height: 16),
-                            _buildPaginationControls(totalPages, totalRows, startRow, endRow),
-                          ]
-                        ],
+                              )
+                            else ...[
+                              _buildResponsiveTable(_allTicketsPage, _ticketsByPhone, _ticketsByName),
+                              const SizedBox(height: 16),
+                              _buildPaginationControls(totalPages, _totalAllCount, startRow, endRow),
+                            ]
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          );
-        },
-      ),
     );
   }
 
   Widget _buildMetricsRow(int sold, int books, int prizes) {
     final isMobile = MediaQuery.of(context).size.width < 600;
-    
+
     return LayoutBuilder(
       builder: (context, constraints) {
         return GridView.count(
@@ -158,24 +457,24 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
           children: [
             _buildMetricCard(
               title: "TOTAL TICKETS SOLD",
-              value: sold.toString(),
-              subtitle: "Out of 20,000 maximum",
-              icon: Icons.local_activity,
+              value: "$sold",
+              subtitle: "Active participants",
+              icon: Icons.confirmation_number,
               color: const Color(0xFF00695C),
             ),
             _buildMetricCard(
               title: "ACTIVE BOOKS",
-              value: books.toString(),
-              subtitle: "Books with >=1 ticket sold",
-              icon: Icons.menu_book,
+              value: "$books",
+              subtitle: "Book groups active",
+              icon: Icons.book,
               color: const Color(0xFF0277BD),
             ),
             _buildMetricCard(
-              title: "PRIZES AWARDED",
-              value: prizes.toString(),
-              subtitle: "Consolation + Grand Prizes",
+              title: "TOTAL PRIZES AWARDED",
+              value: "$prizes",
+              subtitle: "Winners drawn",
               icon: Icons.emoji_events,
-              color: Colors.amber.shade800,
+              color: const Color(0xFFD84315),
             ),
           ],
         );
@@ -265,7 +564,9 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                   setState(() {
                     _searchQuery = val;
                     _currentPage = 1;
+                    _pageStartDocs.clear();
                   });
+                  _loadTicketsPage();
                 },
                 decoration: InputDecoration(
                   hintText: "Search by Name, Phone, Ticket # or Book ID...",
@@ -278,7 +579,9 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                             setState(() {
                               _searchQuery = "";
                               _currentPage = 1;
+                              _pageStartDocs.clear();
                             });
+                            _loadTicketsPage();
                           },
                         )
                       : null,
@@ -304,7 +607,9 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                         setState(() {
                           _selectedFilter = newValue;
                           _currentPage = 1;
+                          _pageStartDocs.clear();
                         });
+                        _loadTicketsPage();
                       }
                     },
                     items: <String>[
@@ -330,6 +635,38 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                   ),
                 ),
               ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    value: _rowsPerPage,
+                    isExpanded: true,
+                    icon: const Icon(Icons.format_list_numbered, color: Color(0xFF00695C)),
+                    onChanged: (int? newValue) {
+                      if (newValue != null) {
+                        setState(() {
+                          _rowsPerPage = newValue;
+                          _currentPage = 1;
+                          _pageStartDocs.clear();
+                        });
+                        _loadTicketsPage();
+                      }
+                    },
+                    items: <int>[5, 10, 25, 50].map<DropdownMenuItem<int>>((int value) {
+                      return DropdownMenuItem<int>(
+                        value: value,
+                        child: Text("$value rows"),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -349,7 +686,9 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                   setState(() {
                     _searchQuery = val;
                     _currentPage = 1;
+                    _pageStartDocs.clear();
                   });
+                  _loadTicketsPage();
                 },
                 decoration: InputDecoration(
                   hintText: "Search by Name, Phone, Ticket # or Book ID...",
@@ -362,7 +701,9 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                             setState(() {
                               _searchQuery = "";
                               _currentPage = 1;
+                              _pageStartDocs.clear();
                             });
+                            _loadTicketsPage();
                           },
                         )
                       : null,
@@ -388,7 +729,9 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                       setState(() {
                         _selectedFilter = newValue;
                         _currentPage = 1;
+                        _pageStartDocs.clear();
                       });
+                      _loadTicketsPage();
                     }
                   },
                   items: <String>[
@@ -425,12 +768,15 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
               child: DropdownButtonHideUnderline(
                 child: DropdownButton<int>(
                   value: _rowsPerPage,
+                  icon: const Icon(Icons.format_list_numbered, color: Color(0xFF00695C)),
                   onChanged: (int? newValue) {
                     if (newValue != null) {
                       setState(() {
                         _rowsPerPage = newValue;
                         _currentPage = 1;
+                        _pageStartDocs.clear();
                       });
+                      _loadTicketsPage();
                     }
                   },
                   items: <int>[5, 10, 25, 50].map<DropdownMenuItem<int>>((int value) {
@@ -448,7 +794,11 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
     );
   }
 
-  Widget _buildResponsiveTable(List<Ticket> pageTickets) {
+  Widget _buildResponsiveTable(
+    List<Ticket> pageTickets,
+    Map<String, List<int>> ticketsByPhone,
+    Map<String, List<int>> ticketsByName,
+  ) {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: DataTable(
@@ -472,6 +822,14 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
           ),
         ],
         rows: pageTickets.map((ticket) {
+          List<int> bought = [];
+          if (ticket.isSold) {
+            if (ticket.buyerPhone.isNotEmpty) {
+              bought = ticketsByPhone[ticket.buyerPhone.trim()] ?? [];
+            }
+          }
+          bought.sort();
+
           return DataRow(
             cells: [
               DataCell(
@@ -486,7 +844,26 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                   style: const TextStyle(color: Colors.blueGrey, fontWeight: FontWeight.w500),
                 ),
               ),
-              DataCell(Text(ticket.buyerName)),
+              DataCell(
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(ticket.buyerName),
+                    if (bought.length > 1) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        "Tickets: ${bought.map((n) => '#${n.toString().padLeft(4, '0')}').join(', ')}",
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Color(0xFF00695C),
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
               DataCell(
                 Text(
                   ticket.buyerPhone,
@@ -557,6 +934,7 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                         setState(() {
                           _currentPage--;
                         });
+                        _loadTicketsPage();
                       }
                     : null,
               ),
@@ -571,6 +949,7 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                         setState(() {
                           _currentPage++;
                         });
+                        _loadTicketsPage();
                       }
                     : null,
               ),

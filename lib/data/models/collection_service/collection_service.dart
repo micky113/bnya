@@ -15,6 +15,7 @@ class CollectionService {
     // References
     final contributorRef = _db.collection('contributors').doc(contributorId);
     final financeRef = _db.collection('finances').doc(); // Auto-ID
+    final ledgerRef = _db.collection('ledger').doc(); // Auto-ID for ledger entry
 
     // Run a Transaction to ensure data consistency
     await _db.runTransaction((transaction) async {
@@ -54,6 +55,18 @@ class CollectionService {
         'timestamp': FieldValue.serverTimestamp(),
         'type': 'income',
         'source': 'collection'
+      });
+
+      // 5. Write: Reflect as income in the financial ledger as cash
+      transaction.set(ledgerRef, {
+        'type': 'income',
+        'date': Timestamp.now(),
+        'voucher': 'Collection: $contributorName ($contributorId)',
+        'cash': amountCollected,
+        'bankSbi': 0.0,
+        'bankHdfc': 0.0,
+        'sheetRowId': DateTime.now().millisecondsSinceEpoch,
+        'createdAt': FieldValue.serverTimestamp(),
       });
     });
   }

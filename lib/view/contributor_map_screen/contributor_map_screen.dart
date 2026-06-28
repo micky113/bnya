@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 import 'dart:typed_data'; // Added for Uint8List
 import 'package:bnya/widgets/add_contributor_dialog/add_contributor_dialog.dart';
+import 'package:bnya/widgets/edit_contributor_dialog/edit_contributor_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -51,13 +52,14 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
   final List<String> _paymentTypes = [
     'Kalash',
     'Coupon',
-    'SBI',
-    'HDFC',
+    'Cheque',
     'Others',
   ];
   final List<String> _adminEmails = [
     "mohanty747@gmail.com",
     "treasurer@society.com",
+    "utkalspace@gmail.com",
+    "mishra.debidatta@gmail.com",
   ];
 
   @override
@@ -459,31 +461,33 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
             initialChildSize: 0.7,
             maxChildSize: 0.9,
             builder:
-                (_, scrollController) => SingleChildScrollView(
-                  controller: scrollController,
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      children: [
-                        CircleAvatar(
-                          radius: 50,
-                          backgroundColor: Colors.grey[200],
-                          backgroundImage:
-                              c.imageUrl != null
-                                  ? NetworkImage(c.imageUrl!)
-                                  : null,
-                          child:
-                              c.imageUrl == null
-                                  ? Icon(
-                                    Icons.person,
-                                    size: 50,
-                                    color: Colors.grey[400],
-                                  )
-                                  : null,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          c.name,
+                (_, scrollController) => Stack(
+                  children: [
+                    SingleChildScrollView(
+                      controller: scrollController,
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          children: [
+                            CircleAvatar(
+                              radius: 50,
+                              backgroundColor: Colors.grey[200],
+                              backgroundImage:
+                                  c.imageUrl != null
+                                      ? NetworkImage(c.imageUrl!)
+                                      : null,
+                              child:
+                                  c.imageUrl == null
+                                      ? Icon(
+                                        Icons.person,
+                                        size: 50,
+                                        color: Colors.grey[400],
+                                      )
+                                      : null,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              c.name,
                           style: const TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.bold,
@@ -685,6 +689,28 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
                     ),
                   ),
                 ),
+                Positioned(
+                  top: 16,
+                  right: 16,
+                  child: CircleAvatar(
+                    backgroundColor: Colors.grey[100],
+                    child: IconButton(
+                      icon: const Icon(Icons.edit, color: Colors.blue),
+                      tooltip: "Edit Profile",
+                      onPressed: () {
+                        Navigator.pop(context); // Close bottom sheet
+                        showDialog(
+                          context: context,
+                          builder: (ctx) => EditContributorDialog(
+                            contributor: c,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
     );
   }
@@ -784,6 +810,7 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
   void _showAddPaymentDialog(BuildContext context, Contributor c) {
     final amountCtrl = TextEditingController();
     final refCtrl = TextEditingController();
+    final ticketsCtrl = TextEditingController();
     String selectedType = 'Kalash';
     bool isLoading = false;
     Uint8List? imgBytes;
@@ -858,12 +885,24 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
                         const SizedBox(height: 20),
                         TextField(
                           controller: refCtrl,
-                          decoration: const InputDecoration(
-                            labelText: "Reference No",
-                            border: OutlineInputBorder(),
+                          decoration: InputDecoration(
+                            labelText: selectedType == 'Coupon'
+                                ? 'Coupon No'
+                                : selectedType == 'Cheque'
+                                    ? 'Cheque No'
+                                    : 'UTR No',
+                            border: const OutlineInputBorder(),
                           ),
                         ),
                       ],
+                      const SizedBox(height: 20),
+                      TextField(
+                        controller: ticketsCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Lottery Ticket Numbers(eg: A2001-A2100)',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
                       const SizedBox(height: 20),
                       Row(
                         children: [
@@ -941,6 +980,7 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
                                       date: DateTime.now(),
                                       type: selectedType,
                                       referenceId: refCtrl.text,
+                                      remarks: ticketsCtrl.text.trim(),
                                       imageUrl: url,
                                     );
 
@@ -949,11 +989,71 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
                                           ...c.paymentHistory,
                                           newPay,
                                         ].map((e) => e.toMap()).toList();
-                                    await FirebaseFirestore.instance
-                                        .collection('contributors')
-                                        .doc(c.id)
-                                        .update({'paymentHistory': history});
-                                    if (mounted) Navigator.pop(context);
+
+                                     final List<int> tickets = _parseTicketNumbers(ticketsCtrl.text);
+                                     final firestore = FirebaseFirestore.instance;
+
+                                     if (tickets.isNotEmpty) {
+                                       final List<DocumentSnapshot> snaps = await Future.wait(
+                                         tickets.map((t) => firestore.collection('tickets').doc(t.toString()).get())
+                                       );
+                                       final List<int> duplicateTickets = [];
+                                       for (final snap in snaps) {
+                                         if (snap.exists) {
+                                           final int? existingNum = int.tryParse(snap.id);
+                                           if (existingNum != null) {
+                                             duplicateTickets.add(existingNum);
+                                           }
+                                         }
+                                       }
+                                       if (duplicateTickets.isNotEmpty) {
+                                         if (mounted) {
+                                           ScaffoldMessenger.of(context).showSnackBar(
+                                             SnackBar(
+                                               content: Text("Error: Ticket(s) #${duplicateTickets.join(', ')} already registered!"),
+                                               backgroundColor: Colors.red,
+                                             ),
+                                           );
+                                         }
+                                         setSheetState(() => isLoading = false);
+                                         return;
+                                       }
+                                     }
+
+                                     final batch = firestore.batch();
+
+                                     final contributorRef = firestore.collection('contributors').doc(c.id);
+                                     batch.update(contributorRef, {'paymentHistory': history});
+
+                                     final ledgerRef = firestore.collection('ledger').doc();
+                                     batch.set(ledgerRef, {
+                                       'type': 'income',
+                                       'date': Timestamp.now(),
+                                       'voucher': 'Collection: ${c.name} (${c.id})',
+                                       'cash': amt,
+                                       'bankSbi': 0.0,
+                                       'bankHdfc': 0.0,
+                                       'sheetRowId': DateTime.now().millisecondsSinceEpoch,
+                                       'createdAt': FieldValue.serverTimestamp(),
+                                     });
+
+                                     for (final tNum in tickets) {
+                                       final int bookId = ((tNum - 1) ~/ 100) + 1;
+                                       final ticketRef = firestore.collection('tickets').doc(tNum.toString());
+                                       batch.set(ticketRef, {
+                                         'ticketNumber': tNum,
+                                         'bookId': bookId,
+                                         'buyerName': c.name,
+                                         'buyerPhone': c.contactNumber,
+                                         'isSold': true,
+                                         'hasWonConsolation': false,
+                                         'hasWonGrandPrize': false,
+                                       }, SetOptions(merge: true));
+                                     }
+
+                                     await batch.commit();
+
+                                     if (mounted) Navigator.pop(context);
                                   },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.blue[900],
@@ -1466,4 +1566,33 @@ class _AddContributorDialogState extends State<AddContributorDialog> {
       ),
     );
   }
+}
+
+List<int> _parseTicketNumbers(String input) {
+  final List<int> results = [];
+  final parts = input.split(',');
+  for (var part in parts) {
+    part = part.trim();
+    if (part.isEmpty) continue;
+
+    final rangeMatch = RegExp(r'[a-zA-Z]*\s*(\d+)\s*(?:-|to)\s*[a-zA-Z]*\s*(\d+)').firstMatch(part);
+    if (rangeMatch != null) {
+      final start = int.tryParse(rangeMatch.group(1)!) ?? 0;
+      final end = int.tryParse(rangeMatch.group(2)!) ?? 0;
+      if (start > 0 && end >= start) {
+        for (int i = start; i <= end; i++) {
+          results.add(i);
+        }
+      }
+    } else {
+      final numberMatch = RegExp(r'\d+').firstMatch(part);
+      if (numberMatch != null) {
+        final numVal = int.tryParse(numberMatch.group(0)!) ?? 0;
+        if (numVal > 0) {
+          results.add(numVal);
+        }
+      }
+    }
+  }
+  return results.toSet().toList();
 }

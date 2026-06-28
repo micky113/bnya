@@ -24,6 +24,9 @@ class _WinnersScreenState extends State<WinnersScreen> {
   StreamSubscription? _grandSub;
   StreamSubscription? _consolationSub;
 
+  // Total sold tickets count
+  int _totalSold = 0;
+
   // Mask Name helper for privacy
   String _maskName(String name) {
     if (name.isEmpty) return "";
@@ -46,6 +49,24 @@ class _WinnersScreenState extends State<WinnersScreen> {
   void initState() {
     super.initState();
     _listenToWinners();
+    _fetchTotalSoldCount();
+  }
+
+  Future<void> _fetchTotalSoldCount() async {
+    try {
+      final aggregateSnapshot = await FirebaseFirestore.instance
+          .collection('tickets')
+          .where('isSold', isEqualTo: true)
+          .count()
+          .get();
+      if (mounted) {
+        setState(() {
+          _totalSold = aggregateSnapshot.count ?? 0;
+        });
+      }
+    } catch (e) {
+      print("ERROR: Failed to fetch sold tickets count: $e");
+    }
   }
 
   void _listenToWinners() {
@@ -200,6 +221,30 @@ class _WinnersScreenState extends State<WinnersScreen> {
                       "Community Lottery Draw 2025 results are synchronized live",
                       style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
                       textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF00695C).withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: const Color(0xFF00695C).withOpacity(0.2)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.local_activity, color: Color(0xFF00695C), size: 16),
+                          const SizedBox(width: 8),
+                          Text(
+                            "Total Tickets Sold: $_totalSold",
+                            style: const TextStyle(
+                              color: Color(0xFF00695C),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),

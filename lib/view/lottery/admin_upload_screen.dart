@@ -1,6 +1,9 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:bnya/view/lottery/ticket_model.dart';
+import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 
 class AdminUploadScreen extends StatefulWidget {
   const AdminUploadScreen({super.key});
@@ -12,7 +15,6 @@ class AdminUploadScreen extends StatefulWidget {
 class _AdminUploadScreenState extends State<AdminUploadScreen> {
   final _formKey = GlobalKey<FormState>();
   final _ticketController = TextEditingController();
-  final _bookIdController = TextEditingController();
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
   
@@ -22,15 +24,216 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
   bool _isUploadingBulk = false;
   double _bulkProgress = 0.0;
   String _bulkStatus = "";
+  bool _isScanning = false;
 
   @override
   void dispose() {
     _ticketController.dispose();
-    _bookIdController.dispose();
     _nameController.dispose();
     _phoneController.dispose();
     _csvController.dispose();
     super.dispose();
+  }
+
+  Future<String?> _showApiKeyDialog(String initialValue) async {
+    final controller = TextEditingController(text: initialValue);
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Gemini API Key Setup"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "Enter your Gemini API Key. This will be securely saved in Firestore for all organizers.",
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                decoration: const InputDecoration(
+                  labelText: "API Key",
+                  hintText: "AIzaSy...",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                "You can get a free API key from Google AI Studio (aistudio.google.com).",
+                style: TextStyle(fontSize: 11, color: Colors.grey),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: const Text("Cancel"),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text("Save"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<String?> _getOrPromptApiKey() async {
+    try {
+      final doc = await FirebaseFirestore.instance.collection('config').doc('keys').get();
+      if (doc.exists) {
+        final data = doc.data();
+        if (data != null && data['geminiApiKey'] != null && data['geminiApiKey'].toString().trim().isNotEmpty) {
+          return data['geminiApiKey'].toString().trim();
+        }
+      }
+    } catch (e) {
+      debugPrint("Error fetching API key: $e");
+    }
+
+    if (!mounted) return null;
+    final String? enteredKey = await _showApiKeyDialog("");
+
+    if (enteredKey == null || enteredKey.isEmpty) {
+      return null;
+    }
+
+    try {
+      await FirebaseFirestore.instance.collection('config').doc('keys').set({
+        'geminiApiKey': enteredKey,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint("Error saving API key to Firestore: $e");
+    }
+
+    return enteredKey;
+  }
+
+  Future<void> _scanTicketPhoto() async {
+    final apiKey = await _getOrPromptApiKey();
+    if (!mounted) return;
+    if (apiKey == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Scan cancelled: Gemini API key is required.")),
+      );
+      return;
+    }
+
+    final ImagePicker picker = ImagePicker();
+    XFile? imageFile;
+    try {
+      imageFile = await picker.pickImage(
+        source: ImageSource.camera,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 80,
+      );
+    } catch (e) {
+      imageFile = await picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 80,
+      );
+    }
+
+    if (imageFile == null) return;
+
+    setState(() => _isScanning = true);
+
+    try {
+      final bytes = await imageFile.readAsBytes();
+      final base64Image = base64Encode(bytes);
+
+      final uri = Uri.parse(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
+      );
+
+      final prompt = "Analyze this physical lottery ticket image. Extract the ticket number(s) (which are numeric), "
+          "the buyer's name, and the buyer's phone number. Provide the result strictly in JSON format with "
+          "these exact keys: 'ticketNumbers' (list of integers), 'buyerName' (string), and 'buyerPhone' (string). "
+          "If a field cannot be found, return empty list or empty string. Do not include markdown code block "
+          "formatting (like ```json) in your response, return raw JSON string only.";
+
+      final response = await http.post(
+        uri,
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "contents": [
+            {
+              "parts": [
+                {"text": prompt},
+                {
+                  "inlineData": {
+                    "mimeType": "image/jpeg",
+                    "data": base64Image,
+                  }
+                }
+              ]
+            }
+          ]
+        }),
+      );
+
+      if (response.statusCode == 429) {
+        throw Exception("Rate limit exceeded (429). If you are using the Gemini free tier, please wait a minute before scanning again or check your API key quota on Google AI Studio.");
+      } else if (response.statusCode != 200) {
+        throw Exception("API returned status code ${response.statusCode}. Please check that your API Key is valid.");
+      }
+
+      final responseData = jsonDecode(response.body);
+      final String textContent = responseData['candidates'][0]['content']['parts'][0]['text'] ?? '';
+      
+      String cleanedText = textContent.trim();
+      if (cleanedText.startsWith("```")) {
+        cleanedText = cleanedText.substring(3);
+        if (cleanedText.startsWith("json")) {
+          cleanedText = cleanedText.substring(4);
+        }
+      }
+      if (cleanedText.endsWith("```")) {
+        cleanedText = cleanedText.substring(0, cleanedText.length - 3);
+      }
+      cleanedText = cleanedText.trim();
+
+      final parsed = jsonDecode(cleanedText) as Map<String, dynamic>;
+
+      final List<dynamic> tNumsList = parsed['ticketNumbers'] ?? [];
+      final String name = parsed['buyerName'] ?? '';
+      final String phone = parsed['buyerPhone'] ?? '';
+
+      final String tNumsStr = tNumsList.map((e) => e.toString()).join(", ");
+
+      if (mounted) {
+        setState(() {
+          if (tNumsStr.isNotEmpty) _ticketController.text = tNumsStr;
+          if (name.isNotEmpty) _nameController.text = name;
+          if (phone.isNotEmpty) _phoneController.text = phone;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Scan complete! Please review and save."),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Scan failed: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isScanning = false);
+    }
   }
 
   // Save single ticket with duplication checks
@@ -40,20 +243,40 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
     setState(() => _isSavingSingle = true);
 
     try {
-      final int ticketNum = int.parse(_ticketController.text.trim());
-      final int bookId = int.parse(_bookIdController.text.trim());
       final String name = _nameController.text.trim();
       final String phone = _phoneController.text.trim();
 
-      // Duplication check in Firestore
-      final docRef = FirebaseFirestore.instance.collection('tickets').doc(ticketNum.toString());
-      final docSnap = await docRef.get();
+      // Parse ticket numbers using robust regex range parser
+      final List<int> ticketNums = _parseTicketNumbers(_ticketController.text);
 
-      if (docSnap.exists) {
+      final List<int> uniqueNums = ticketNums.toSet().toList();
+
+      if (uniqueNums.isEmpty) {
+        setState(() => _isSavingSingle = false);
+        return;
+      }
+
+      // Duplication check in Firestore in parallel
+      final FirebaseFirestore firestore = FirebaseFirestore.instance;
+      final List<DocumentSnapshot> docSnaps = await Future.wait(
+        uniqueNums.map((n) => firestore.collection('tickets').doc(n.toString()).get())
+      );
+
+      final List<int> existingTickets = [];
+      for (final snap in docSnaps) {
+        if (snap.exists) {
+          final int? existingNum = int.tryParse(snap.id);
+          if (existingNum != null) {
+            existingTickets.add(existingNum);
+          }
+        }
+      }
+
+      if (existingTickets.isNotEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text("Error: Ticket #$ticketNum is already registered!"),
+              content: Text("Error: Ticket(s) #${existingTickets.join(', ')} already registered!"),
               backgroundColor: Colors.red,
             ),
           );
@@ -62,34 +285,38 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
         return;
       }
 
-      // Create ticket object
-      final ticket = Ticket(
-        ticketNumber: ticketNum,
-        bookId: bookId,
-        buyerName: name,
-        buyerPhone: phone,
-        isSold: true,
-      );
+      // Write tickets in a batch write
+      final WriteBatch batch = firestore.batch();
+      for (final n in uniqueNums) {
+        final int bookId = ((n - 1) ~/ 100) + 1;
+        final ticket = Ticket(
+          ticketNumber: n,
+          bookId: bookId,
+          buyerName: name,
+          buyerPhone: phone,
+          isSold: true,
+        );
+        final docRef = firestore.collection('tickets').doc(n.toString());
+        batch.set(docRef, ticket.toMap());
+      }
 
-      // Save to Firestore
-      await docRef.set(ticket.toMap());
+      await batch.commit();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Ticket #$ticketNum successfully registered! (Book #${ticket.bookId})"),
+            content: Text("Ticket(s) #${uniqueNums.join(', ')} successfully registered!"),
             backgroundColor: Colors.green,
           ),
         );
         _ticketController.clear();
-        _bookIdController.clear();
         _nameController.clear();
         _phoneController.clear();
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Failed to register ticket: $e")),
+          SnackBar(content: Text("Failed to register tickets: $e")),
         );
       }
     } finally {
@@ -345,13 +572,44 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Row(
+              Row(
                 children: [
-                  Icon(Icons.person_add_alt_1, color: Color(0xFF0277BD)),
-                  SizedBox(width: 10),
-                  Text(
+                  const Icon(Icons.person_add_alt_1, color: Color(0xFF0277BD)),
+                  const SizedBox(width: 10),
+                  const Text(
                     "Manual Single Registration",
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () async {
+                      final doc = await FirebaseFirestore.instance.collection('config').doc('keys').get();
+                      final currentKey = doc.exists ? (doc.data()?['geminiApiKey']?.toString() ?? '') : '';
+                      if (!mounted) return;
+                      final String? enteredKey = await _showApiKeyDialog(currentKey);
+                      if (enteredKey != null) {
+                        await FirebaseFirestore.instance.collection('config').doc('keys').set({
+                          'geminiApiKey': enteredKey,
+                        }, SetOptions(merge: true));
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("Gemini API Key updated successfully!")),
+                        );
+                      }
+                    },
+                    tooltip: "Configure Gemini API Key",
+                    icon: const Icon(Icons.vpn_key_outlined, color: Color(0xFF00695C)),
+                  ),
+                  IconButton(
+                    onPressed: _isScanning ? null : _scanTicketPhoto,
+                    tooltip: "Scan Physical Ticket via AI",
+                    icon: _isScanning
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00695C)),
+                          )
+                        : const Icon(Icons.camera_alt_outlined, color: Color(0xFF00695C)),
                   ),
                 ],
               ),
@@ -359,56 +617,29 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
 
               // Ticket Number field
               const Text(
-                "Ticket Number (1 - 20000)",
+                "Ticket Number(s) (1 - 20000, comma-separated)",
                 style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
               ),
               const SizedBox(height: 6),
               TextFormField(
                 controller: _ticketController,
-                keyboardType: TextInputType.number,
+                keyboardType: TextInputType.text,
                 decoration: const InputDecoration(
-                  hintText: "Enter number e.g. 1542",
+                  hintText: "e.g. 1542, 1545, 1600",
                   prefixIcon: Icon(Icons.confirmation_number_outlined),
                 ),
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
-                    return "Ticket number is required";
+                    return "Ticket number(s) required";
                   }
-                  final int? num = int.tryParse(value.trim());
-                  if (num == null) {
-                    return "Enter a valid integer";
+                  final tickets = _parseTicketNumbers(value);
+                  if (tickets.isEmpty) {
+                    return "Please enter valid ticket number(s) or range (e.g. A2001-A2010)";
                   }
-                  if (num < 1 || num > 20000) {
-                    return "Number must be between 1 and 20,000";
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-
-              // Book ID field
-              const Text(
-                "Book ID (Manual Registration)",
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-              ),
-              const SizedBox(height: 6),
-              TextFormField(
-                controller: _bookIdController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  hintText: "Enter Book ID e.g. 15",
-                  prefixIcon: Icon(Icons.book_outlined),
-                ),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return "Book ID is required";
-                  }
-                  final int? num = int.tryParse(value.trim());
-                  if (num == null) {
-                    return "Enter a valid integer";
-                  }
-                  if (num < 1) {
-                    return "Book ID must be greater than 0";
+                  for (final num in tickets) {
+                    if (num < 1 || num > 20000) {
+                      return "Ticket numbers must be between 1 and 20,000 (invalid: #$num)";
+                    }
                   }
                   return null;
                 },
@@ -638,4 +869,33 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
       ),
     );
   }
+}
+
+List<int> _parseTicketNumbers(String input) {
+  final List<int> results = [];
+  final parts = input.split(',');
+  for (var part in parts) {
+    part = part.trim();
+    if (part.isEmpty) continue;
+
+    final rangeMatch = RegExp(r'[a-zA-Z]*\s*(\d+)\s*(?:-|to)\s*[a-zA-Z]*\s*(\d+)').firstMatch(part);
+    if (rangeMatch != null) {
+      final start = int.tryParse(rangeMatch.group(1)!) ?? 0;
+      final end = int.tryParse(rangeMatch.group(2)!) ?? 0;
+      if (start > 0 && end >= start) {
+        for (int i = start; i <= end; i++) {
+          results.add(i);
+        }
+      }
+    } else {
+      final numberMatch = RegExp(r'\d+').firstMatch(part);
+      if (numberMatch != null) {
+        final numVal = int.tryParse(numberMatch.group(0)!) ?? 0;
+        if (numVal > 0) {
+          results.add(numVal);
+        }
+      }
+    }
+  }
+  return results.toSet().toList();
 }
