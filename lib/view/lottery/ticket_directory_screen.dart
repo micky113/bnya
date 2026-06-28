@@ -26,8 +26,6 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
   int _totalPrizes = 0;
 
   final List<DocumentSnapshot> _pageStartDocs = [];
-  Map<String, List<int>> _ticketsByPhone = {};
-  final Map<String, List<int>> _ticketsByName = {}; // Kept for method compatibility
 
   @override
   void initState() {
@@ -141,7 +139,6 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
               _allTicketsPage = (startRow < _totalAllCount) ? allMatched.sublist(startRow, endRow) : [];
               _isLoadingAllPage = false;
             });
-            _loadOtherTicketsForPage(_allTicketsPage);
           }
           return;
         } else if (_selectedFilter == "Consolation" || _selectedFilter == "Grand") {
@@ -159,7 +156,6 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
               _allTicketsPage = (startRow < _totalAllCount) ? allMatched.sublist(startRow, endRow) : [];
               _isLoadingAllPage = false;
             });
-            _loadOtherTicketsForPage(_allTicketsPage);
           }
           return;
         }
@@ -193,7 +189,6 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
             }
             _isLoadingAllPage = false;
           });
-          _loadOtherTicketsForPage(_allTicketsPage);
         }
       }
       // Case B: Search Query Active (perform server-side target lookup)
@@ -311,7 +306,6 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
             _allTicketsPage = (startRow < _totalAllCount) ? allMatched.sublist(startRow, endRow) : [];
             _isLoadingAllPage = false;
           });
-          _loadOtherTicketsForPage(_allTicketsPage);
         }
       }
     } catch (e) {
@@ -324,40 +318,7 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
     }
   }
 
-  Future<void> _loadOtherTicketsForPage(List<Ticket> pageTickets) async {
-    final firestore = FirebaseFirestore.instance;
-    final uniquePhones = pageTickets
-        .map((t) => t.buyerPhone.trim())
-        .where((p) => p.isNotEmpty)
-        .toSet()
-        .toList();
 
-    if (uniquePhones.isEmpty) return;
-
-    try {
-      final futures = uniquePhones.map((phone) {
-        return firestore.collection('tickets').where('buyerPhone', isEqualTo: phone).get();
-      });
-
-      final results = await Future.wait(futures);
-      final Map<String, List<int>> tempMap = {};
-
-      for (int i = 0; i < uniquePhones.length; i++) {
-        final phone = uniquePhones[i];
-        final snap = results[i];
-        final nums = snap.docs.map((d) => int.tryParse(d.id) ?? 0).where((n) => n > 0).toList();
-        tempMap[phone] = nums;
-      }
-
-      if (mounted) {
-        setState(() {
-          _ticketsByPhone = tempMap;
-        });
-      }
-    } catch (e) {
-      debugPrint("Error loading buyer tickets: $e");
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -427,7 +388,7 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                                 ),
                               )
                             else ...[
-                              _buildResponsiveTable(_allTicketsPage, _ticketsByPhone, _ticketsByName),
+                              _buildResponsiveTable(_allTicketsPage),
                               const SizedBox(height: 16),
                               _buildPaginationControls(totalPages, _totalAllCount, startRow, endRow),
                             ]
@@ -796,8 +757,6 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
 
   Widget _buildResponsiveTable(
     List<Ticket> pageTickets,
-    Map<String, List<int>> ticketsByPhone,
-    Map<String, List<int>> ticketsByName,
   ) {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -822,19 +781,11 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
           ),
         ],
         rows: pageTickets.map((ticket) {
-          List<int> bought = [];
-          if (ticket.isSold) {
-            if (ticket.buyerPhone.isNotEmpty) {
-              bought = ticketsByPhone[ticket.buyerPhone.trim()] ?? [];
-            }
-          }
-          bought.sort();
-
           return DataRow(
             cells: [
               DataCell(
                 Text(
-                  "#${ticket.ticketNumber.toString().padLeft(4, '0')}",
+                  "#${Ticket.formatNumber(ticket.ticketNumber)}",
                   style: const TextStyle(fontWeight: FontWeight.bold, fontFamily: 'monospace'),
                 ),
               ),
@@ -845,24 +796,7 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                 ),
               ),
               DataCell(
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(ticket.buyerName),
-                    if (bought.length > 1) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        "Tickets: ${bought.map((n) => '#${n.toString().padLeft(4, '0')}').join(', ')}",
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: Color(0xFF00695C),
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
+                Text(ticket.buyerName),
               ),
               DataCell(
                 Text(
@@ -916,16 +850,69 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
   }
 
   Widget _buildPaginationControls(int totalPages, int totalRows, int startRow, int endRow) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
+
+    if (isMobile) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.chevron_left),
+                  onPressed: _currentPage > 1
+                      ? () {
+                          setState(() {
+                            _currentPage--;
+                          });
+                          _loadTicketsPage();
+                        }
+                      : null,
+                ),
+                Text(
+                  "Page $_currentPage of $totalPages",
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_right),
+                  onPressed: _currentPage < totalPages
+                      ? () {
+                          setState(() {
+                            _currentPage++;
+                          });
+                          _loadTicketsPage();
+                        }
+                      : null,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "Showing ${startRow + 1} to $endRow of $totalRows tickets",
+              style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            "Showing ${startRow + 1} to $endRow of $totalRows tickets",
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                "Showing ${startRow + 1} to $endRow of $totalRows tickets",
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+              ),
+            ),
           ),
           Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
               IconButton(
                 icon: const Icon(Icons.chevron_left),
@@ -954,6 +941,9 @@ class _TicketDirectoryScreenState extends State<TicketDirectoryScreen> {
                     : null,
               ),
             ],
+          ),
+          const Expanded(
+            child: SizedBox(),
           ),
         ],
       ),

@@ -32,6 +32,7 @@ class _LedgerScreenState extends State<LedgerScreen>
 
   int? _selectedYear;
   int? _selectedMonth;
+  DateTime? _selectedDateFilter;
 
   final List<int> _years = List.generate(10, (index) => 2024 + index);
   final List<String> _months = [
@@ -297,6 +298,15 @@ class _LedgerScreenState extends State<LedgerScreen>
                 filteredDocs.where((e) => e.type == 'expenditure').toList();
           }
 
+          if (_selectedDateFilter != null) {
+            filteredDocs = filteredDocs
+                .where((e) =>
+                    e.date.year == _selectedDateFilter!.year &&
+                    e.date.month == _selectedDateFilter!.month &&
+                    e.date.day == _selectedDateFilter!.day)
+                .toList();
+          }
+
           if (_selectedYear != null) {
             filteredDocs =
                 filteredDocs
@@ -311,11 +321,17 @@ class _LedgerScreenState extends State<LedgerScreen>
           }
 
           if (_searchQuery.isNotEmpty) {
-            filteredDocs =
-                filteredDocs.where((e) {
-                  final voucher = e.voucher?.toLowerCase() ?? "";
-                  return voucher.contains(_searchQuery.toLowerCase());
-                }).toList();
+            final query = _searchQuery.toLowerCase();
+            filteredDocs = filteredDocs.where((e) {
+              final voucher = e.voucher?.toLowerCase() ?? "";
+              final dateFull = _dateFormat.format(e.date).toLowerCase();
+              final dateSlash = DateFormat('dd/MM/yyyy').format(e.date);
+              final dateHyphen = DateFormat('yyyy-MM-dd').format(e.date);
+              return voucher.contains(query) ||
+                  dateFull.contains(query) ||
+                  dateSlash.contains(query) ||
+                  dateHyphen.contains(query);
+            }).toList();
           }
 
           double viewTotal = filteredDocs.fold(
@@ -362,7 +378,10 @@ class _LedgerScreenState extends State<LedgerScreen>
                               _buildDropdown("Year", _selectedYear, _years, (
                                 val,
                               ) {
-                                setState(() => _selectedYear = val);
+                                setState(() {
+                                  _selectedYear = val;
+                                  _selectedDateFilter = null;
+                                });
                               }),
                               const SizedBox(width: 12),
                               _buildDropdown(
@@ -370,18 +389,65 @@ class _LedgerScreenState extends State<LedgerScreen>
                                 _selectedMonth,
                                 List.generate(12, (i) => i + 1),
                                 (val) {
-                                  setState(() => _selectedMonth = val);
+                                  setState(() {
+                                    _selectedMonth = val;
+                                    _selectedDateFilter = null;
+                                  });
                                 },
                                 itemsLabels: _months,
                               ),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                icon: Icon(
+                                  Icons.event,
+                                  size: 18,
+                                  color: _selectedDateFilter != null
+                                      ? Colors.blue[900]
+                                      : Colors.grey,
+                                ),
+                                tooltip: "Pick specific date",
+                                onPressed: () async {
+                                  final picked = await showDatePicker(
+                                    context: context,
+                                    initialDate: _selectedDateFilter ?? DateTime.now(),
+                                    firstDate: DateTime(2020),
+                                    lastDate: DateTime(2030),
+                                  );
+                                  if (picked != null) {
+                                    setState(() {
+                                      _selectedDateFilter = picked;
+                                      _selectedYear = null;
+                                      _selectedMonth = null;
+                                    });
+                                  }
+                                },
+                              ),
+                              if (_selectedDateFilter != null) ...[
+                                Chip(
+                                  label: Text(
+                                    DateFormat('dd/MM/yyyy').format(_selectedDateFilter!),
+                                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                                  ),
+                                  onDeleted: () {
+                                    setState(() {
+                                      _selectedDateFilter = null;
+                                    });
+                                  },
+                                  visualDensity: VisualDensity.compact,
+                                  backgroundColor: Colors.blue[50],
+                                  side: BorderSide.none,
+                                ),
+                              ],
                               const Spacer(),
                               if (_selectedYear != null ||
-                                  _selectedMonth != null)
+                                  _selectedMonth != null ||
+                                  _selectedDateFilter != null)
                                 TextButton(
                                   onPressed: () {
                                     setState(() {
                                       _selectedYear = null;
                                       _selectedMonth = null;
+                                      _selectedDateFilter = null;
                                     });
                                   },
                                   child: const Text(

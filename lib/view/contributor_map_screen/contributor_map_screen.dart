@@ -183,6 +183,7 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
           final contributors =
               snapshot.data!.docs
                   .map((doc) => Contributor.fromFirestore(doc))
+                  .where((c) => c.type.toLowerCase() != 'lottery_buyer')
                   .toList();
           final unmappedContributors =
               contributors.where((c) => c.location == null).toList();

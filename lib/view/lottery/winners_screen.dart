@@ -425,7 +425,7 @@ class _WinnersScreenState extends State<WinnersScreen> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      "#${winner.ticketNumber.toString().padLeft(4, '0')}",
+                      "#${Ticket.formatNumber(winner.ticketNumber)}",
                       style: const TextStyle(
                         fontSize: 28,
                         fontWeight: FontWeight.w900,

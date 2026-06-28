@@ -169,7 +169,7 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> {
           if (!_settledBooks.contains(bookId)) {
             final bookTickets = _ticketsByBook[bookId]!;
             final randomTicket = bookTickets[random.nextInt(bookTickets.length)];
-            _consolationDisplayNumbers[bookId] = randomTicket.ticketNumber.toString().padLeft(4, '0');
+            _consolationDisplayNumbers[bookId] = Ticket.formatNumber(randomTicket.ticketNumber);
           }
         }
       });
@@ -204,7 +204,7 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> {
       setState(() {
         _settledBooks.add(bookId);
         // Set display number to the actual winner
-        _consolationDisplayNumbers[bookId] = _consolationWinners[bookId]!.ticketNumber.toString().padLeft(4, '0');
+        _consolationDisplayNumbers[bookId] = Ticket.formatNumber(_consolationWinners[bookId]!.ticketNumber);
         _currentlySettlingBookIndex++;
       });
 
@@ -259,7 +259,7 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> {
     _grandRollTimer = Timer.periodic(const Duration(milliseconds: 80), (timer) {
       final randomTicket = _allSoldTickets[random.nextInt(_allSoldTickets.length)];
       setState(() {
-        _rollingGrandNumber = randomTicket.ticketNumber.toString().padLeft(4, '0');
+        _rollingGrandNumber = Ticket.formatNumber(randomTicket.ticketNumber);
         _rollingGrandName = _maskName(randomTicket.buyerName);
       });
     });
@@ -799,7 +799,7 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> {
                           const Icon(Icons.emoji_events, size: 64, color: Colors.amber),
                           const SizedBox(height: 16),
                           Text(
-                            "TICKET #${_revealedGrandWinner!.ticketNumber.toString().padLeft(4, '0')}",
+                            "TICKET #${Ticket.formatNumber(_revealedGrandWinner!.ticketNumber)}",
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 42,
@@ -987,7 +987,7 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> {
                             style: TextStyle(color: Colors.amber.shade200, fontWeight: FontWeight.bold),
                           ),
                           Text(
-                            "Ticket #${winner.ticketNumber.toString().padLeft(4, '0')}",
+                            "Ticket #${Ticket.formatNumber(winner.ticketNumber)}",
                             style: const TextStyle(color: Colors.white, fontFamily: 'monospace', fontWeight: FontWeight.bold),
                           ),
                           Text(
@@ -1042,7 +1042,7 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              "Ticket #${winner.ticketNumber.toString().padLeft(4, '0')}",
+                              "Ticket #${Ticket.formatNumber(winner.ticketNumber)}",
                               style: const TextStyle(color: Colors.white, fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 12),
                             ),
                             const SizedBox(height: 2),

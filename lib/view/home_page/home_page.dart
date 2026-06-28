@@ -486,22 +486,7 @@ class _HomePageState extends State<HomePage> {
                     if (!snapshot.hasData)
                       return const Center(child: CircularProgressIndicator());
 
-                    double totalCollected = 0;
                     int totalContributors = snapshot.data!.docs.length;
-
-                    // --- UPDATED LOGIC: Loop through all docs and sum paymentHistory ---
-                    for (var doc in snapshot.data!.docs) {
-                      final data = doc.data() as Map<String, dynamic>;
-                      final List<dynamic> history =
-                          (data['paymentHistory'] as List<dynamic>?) ?? [];
-
-                      for (var payment in history) {
-                        if (payment is Map && payment['amount'] != null) {
-                          totalCollected +=
-                              (payment['amount'] as num).toDouble();
-                        }
-                      }
-                    }
 
                     return Column(
                       children: [
@@ -515,13 +500,31 @@ class _HomePageState extends State<HomePage> {
                           ),
                         ),
                         const SizedBox(height: 10),
-                        Text(
-                          "₹ ${_formatCurrency(totalCollected)}",
-                          style: TextStyle(
-                            color: Colors.green[800],
-                            fontSize: 40,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        StreamBuilder<QuerySnapshot>(
+                          stream: FirebaseFirestore.instance
+                              .collection('ledger')
+                              .where('type', isEqualTo: 'income')
+                              .snapshots(),
+                          builder: (context, ledgerSnapshot) {
+                            double totalCollected = 0;
+                            if (ledgerSnapshot.hasData) {
+                              for (var doc in ledgerSnapshot.data!.docs) {
+                                final data = doc.data() as Map<String, dynamic>;
+                                final double cash = (data['cash'] ?? 0).toDouble();
+                                final double bankSbi = (data['bankSbi'] ?? 0).toDouble();
+                                final double bankHdfc = (data['bankHdfc'] ?? 0).toDouble();
+                                totalCollected += (cash + bankSbi + bankHdfc);
+                              }
+                            }
+                            return Text(
+                              "₹ ${_formatCurrency(totalCollected)}",
+                              style: TextStyle(
+                                color: Colors.green[800],
+                                fontSize: 40,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            );
+                          },
                         ),
                         const Divider(height: 30),
                         Row(

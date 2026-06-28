@@ -1,5 +1,6 @@
 import 'dart:typed_data'; // Required for Uint8List
 import 'package:bnya/data/models/contributor/contributor.dart';
+import 'package:bnya/view/lottery/ticket_model.dart';
 import 'package:bnya/services/auth_service.dart';
 import 'package:bnya/view/contributor_map_screen/contributor_map_screen.dart';
 // import 'package:bnya/widgets/add_contributor_dialog/add_contributor_dialog.dart';
@@ -389,6 +390,7 @@ class _ContributorDirectoryScreenState
           var docs =
               snapshot.data!.docs
                   .map((d) => Contributor.fromFirestore(d))
+                  .where((c) => c.type.toLowerCase() != 'lottery_buyer')
                   .toList();
 
           if (_searchQuery.isNotEmpty) {
@@ -557,17 +559,20 @@ class _ContributorDirectoryScreenState
                                 String subText = _dateFormat.format(
                                   payment.date,
                                 );
-                                  if (payment.referenceId.isNotEmpty) {
-                                    subText += "\nRef: ${payment.referenceId}";
+                                if (payment.referenceId.isNotEmpty) {
+                                  subText += "\nRef: ${payment.referenceId}";
+                                }
+                                if (payment.remarks.isNotEmpty) {
+                                  final parsedTickets = _parseTicketNumbers(
+                                    payment.remarks,
+                                  );
+                                  if (parsedTickets.isNotEmpty) {
+                                    subText +=
+                                        "\nTickets: ${parsedTickets.map((t) => '#${Ticket.formatNumber(t)}').join(', ')}";
+                                  } else {
+                                    subText += "\nRemarks: ${payment.remarks}";
                                   }
-                                  if (payment.remarks.isNotEmpty) {
-                                    final parsedTickets = _parseTicketNumbers(payment.remarks);
-                                    if (parsedTickets.isNotEmpty) {
-                                      subText += "\nTickets: ${parsedTickets.map((t) => '#${t.toString().padLeft(4, '0')}').join(', ')}";
-                                    } else {
-                                      subText += "\nRemarks: ${payment.remarks}";
-                                    }
-                                  }
+                                }
 
                                 return ListTile(
                                   dense: true,
@@ -1042,24 +1047,39 @@ List<int> _parseTicketNumbers(String input) {
   final List<int> results = [];
   final parts = input.split(',');
   for (var part in parts) {
-    part = part.trim();
+    part = part.trim().toUpperCase();
     if (part.isEmpty) continue;
 
-    final rangeMatch = RegExp(r'[a-zA-Z]*\s*(\d+)\s*(?:-|to)\s*[a-zA-Z]*\s*(\d+)').firstMatch(part);
+    // Matches ranges like A0001-A0010, B0001-B0010, A0001 to A0010, or 0001-0010
+    final rangeMatch = RegExp(r'^([A-B]?)(\d+)\s*(?:-|to)\s*([A-B]?)(\d+)$').firstMatch(part);
     if (rangeMatch != null) {
-      final start = int.tryParse(rangeMatch.group(1)!) ?? 0;
-      final end = int.tryParse(rangeMatch.group(2)!) ?? 0;
-      if (start > 0 && end >= start) {
-        for (int i = start; i <= end; i++) {
-          results.add(i);
+      final startPrefix = rangeMatch.group(1) ?? '';
+      final startNum = int.tryParse(rangeMatch.group(2)!) ?? 0;
+      final endPrefix = rangeMatch.group(3) ?? '';
+      final endNum = int.tryParse(rangeMatch.group(4)!) ?? 0;
+
+      final effectiveStartPrefix = startPrefix.isNotEmpty ? startPrefix : 'A';
+      final effectiveEndPrefix = endPrefix.isNotEmpty ? endPrefix : effectiveStartPrefix;
+
+      if (effectiveStartPrefix == effectiveEndPrefix) {
+        final int offset = (effectiveStartPrefix == 'B') ? 10000 : 0;
+        if (startNum > 0 && endNum >= startNum) {
+          for (int i = startNum; i <= endNum; i++) {
+            if (i >= 1 && i <= 10000) {
+              results.add(offset + i);
+            }
+          }
         }
       }
     } else {
-      final numberMatch = RegExp(r'\d+').firstMatch(part);
+      final numberMatch = RegExp(r'^([A-B]?)(\d+)$').firstMatch(part);
       if (numberMatch != null) {
-        final numVal = int.tryParse(numberMatch.group(0)!) ?? 0;
-        if (numVal > 0) {
-          results.add(numVal);
+        final prefix = numberMatch.group(1) ?? '';
+        final numVal = int.tryParse(numberMatch.group(2)!) ?? 0;
+        final effectivePrefix = prefix.isNotEmpty ? prefix : 'A';
+        final int offset = (effectivePrefix == 'B') ? 10000 : 0;
+        if (numVal >= 1 && numVal <= 10000) {
+          results.add(offset + numVal);
         }
       }
     }
