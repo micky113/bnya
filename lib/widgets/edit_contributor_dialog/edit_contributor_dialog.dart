@@ -76,8 +76,8 @@ class _EditContributorDialogState extends State<EditContributorDialog> {
     }
 
     if (user != null) {
-      // 3. Verify Email
-      if (_adminEmails.contains(user.email)) {
+      // 3. Verify Email (Allow any valid signed-in Google account email)
+      if (user.email != null && user.email!.isNotEmpty) {
         setState(() {
           _isTargetEditable = true;
         });
@@ -90,12 +90,10 @@ class _EditContributorDialogState extends State<EditContributorDialog> {
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("Access Denied. You are not authorized."),
+            content: Text("Access Denied. A valid email address is required."),
             backgroundColor: Colors.red,
           ),
         );
-        // Optional: Sign out unauthorized user
-        await _authService.signOut();
       }
     }
   }
