@@ -2,8 +2,8 @@ import 'dart:typed_data'; // Required for Uint8List
 import 'package:bnya/data/models/contributor/contributor.dart';
 import 'package:bnya/view/lottery/ticket_model.dart';
 import 'package:bnya/services/auth_service.dart';
-import 'package:bnya/view/contributor_map_screen/contributor_map_screen.dart';
-// import 'package:bnya/widgets/add_contributor_dialog/add_contributor_dialog.dart';
+import 'package:bnya/view/contributor_map_screen/contributor_map_screen.dart' hide AddContributorDialog;
+import 'package:bnya/widgets/add_contributor_dialog/add_contributor_dialog.dart';
 import 'package:bnya/widgets/edit_contributor_dialog/edit_contributor_dialog.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -37,7 +37,7 @@ class _ContributorDirectoryScreenState
     'Cheque',
     'Others',
   ];
-  final LatLng _screenCenter = const LatLng(20.2613, 85.8344); // Track center
+
   // --- FILTER STATE ---
   String _selectedFilter = 'All';
   final List<String> _filterOptions = [
@@ -328,18 +328,18 @@ class _ContributorDirectoryScreenState
             _isSearching
                 ? TextField(
                   controller: _searchController,
-                  style: const TextStyle(color: Colors.white),
+                  style: const TextStyle(color: Colors.black),
                   decoration: const InputDecoration(
                     hintText: "Search...",
-                    hintStyle: TextStyle(color: Colors.white70),
+                    hintStyle: TextStyle(color: Colors.black54),
                     border: InputBorder.none,
                   ),
                   onChanged:
                       (val) => setState(() => _searchQuery = val.toLowerCase()),
                 )
                 : const Text("Contributor Directory"),
-        backgroundColor: Colors.blue[900],
-        foregroundColor: Colors.white,
+        backgroundColor: _isSearching ? Colors.white : Colors.blue[900],
+        foregroundColor: _isSearching ? Colors.black : Colors.white,
         actions: [
           IconButton(
             icon: const Icon(Icons.map_outlined),
@@ -374,7 +374,7 @@ class _ContributorDirectoryScreenState
         onPressed:
             () => showDialog(
               context: context,
-              builder: (_) => AddContributorDialog(location: _screenCenter,),
+              builder: (_) => const AddContributorDialog(),
             ),
         backgroundColor: Colors.blue[900],
         icon: const Icon(Icons.person_add, color: Colors.white),

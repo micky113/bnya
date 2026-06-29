@@ -2,8 +2,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:bnya/view/lottery/ticket_model.dart';
-import 'package:http/http.dart' as http;
-import 'package:image_picker/image_picker.dart';
 
 class AdminUploadScreen extends StatefulWidget {
   const AdminUploadScreen({super.key});
@@ -19,7 +17,6 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
   final _phoneController = TextEditingController();
   
   bool _isSavingSingle = false;
-  bool _isScanning = false;
 
   @override
   void dispose() {
@@ -29,206 +26,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
     super.dispose();
   }
 
-  Future<String?> _showApiKeyDialog(String initialValue) async {
-    final controller = TextEditingController(text: initialValue);
-    return showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text("Gemini API Key Setup"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                "Enter your Gemini API Key. This will be securely saved in Firestore for all organizers.",
-                style: TextStyle(fontSize: 13),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                decoration: const InputDecoration(
-                  labelText: "API Key",
-                  hintText: "AIzaSy...",
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                "You can get a free API key from Google AI Studio (aistudio.google.com).",
-                style: TextStyle(fontSize: 11, color: Colors.grey),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, null),
-              child: const Text("Cancel"),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, controller.text.trim()),
-              child: const Text("Save"),
-            ),
-          ],
-        );
-      },
-    );
-  }
 
-  Future<String?> _getOrPromptApiKey() async {
-    try {
-      final doc = await FirebaseFirestore.instance.collection('config').doc('keys').get();
-      if (doc.exists) {
-        final data = doc.data();
-        if (data != null && data['geminiApiKey'] != null && data['geminiApiKey'].toString().trim().isNotEmpty) {
-          return data['geminiApiKey'].toString().trim();
-        }
-      }
-    } catch (e) {
-      debugPrint("Error fetching API key: $e");
-    }
-
-    if (!mounted) return null;
-    final String? enteredKey = await _showApiKeyDialog("");
-
-    if (enteredKey == null || enteredKey.isEmpty) {
-      return null;
-    }
-
-    try {
-      await FirebaseFirestore.instance.collection('config').doc('keys').set({
-        'geminiApiKey': enteredKey,
-      }, SetOptions(merge: true));
-    } catch (e) {
-      debugPrint("Error saving API key to Firestore: $e");
-    }
-
-    return enteredKey;
-  }
-
-  Future<void> _scanTicketPhoto() async {
-    final apiKey = await _getOrPromptApiKey();
-    if (!mounted) return;
-    if (apiKey == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Scan cancelled: Gemini API key is required.")),
-      );
-      return;
-    }
-
-    final ImagePicker picker = ImagePicker();
-    XFile? imageFile;
-    try {
-      imageFile = await picker.pickImage(
-        source: ImageSource.camera,
-        maxWidth: 1024,
-        maxHeight: 1024,
-        imageQuality: 80,
-      );
-    } catch (e) {
-      imageFile = await picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 1024,
-        maxHeight: 1024,
-        imageQuality: 80,
-      );
-    }
-
-    if (imageFile == null) return;
-
-    setState(() => _isScanning = true);
-
-    try {
-      final bytes = await imageFile.readAsBytes();
-      final base64Image = base64Encode(bytes);
-
-      final uri = Uri.parse(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
-      );
-
-      final prompt = "Analyze this physical lottery ticket image. Extract the ticket number(s) (which are numeric), "
-          "the buyer's name, and the buyer's phone number. Provide the result strictly in JSON format with "
-          "these exact keys: 'ticketNumbers' (list of integers), 'buyerName' (string), and 'buyerPhone' (string). "
-          "If a field cannot be found, return empty list or empty string. Do not include markdown code block "
-          "formatting (like ```json) in your response, return raw JSON string only.";
-
-      final response = await http.post(
-        uri,
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "contents": [
-            {
-              "parts": [
-                {"text": prompt},
-                {
-                  "inlineData": {
-                    "mimeType": "image/jpeg",
-                    "data": base64Image,
-                  }
-                }
-              ]
-            }
-          ]
-        }),
-      );
-
-      if (response.statusCode == 429) {
-        throw Exception("Rate limit exceeded (429). If you are using the Gemini free tier, please wait a minute before scanning again or check your API key quota on Google AI Studio.");
-      } else if (response.statusCode != 200) {
-        throw Exception("API returned status code ${response.statusCode}. Please check that your API Key is valid.");
-      }
-
-      final responseData = jsonDecode(response.body);
-      final String textContent = responseData['candidates'][0]['content']['parts'][0]['text'] ?? '';
-      
-      String cleanedText = textContent.trim();
-      if (cleanedText.startsWith("```")) {
-        cleanedText = cleanedText.substring(3);
-        if (cleanedText.startsWith("json")) {
-          cleanedText = cleanedText.substring(4);
-        }
-      }
-      if (cleanedText.endsWith("```")) {
-        cleanedText = cleanedText.substring(0, cleanedText.length - 3);
-      }
-      cleanedText = cleanedText.trim();
-
-      final parsed = jsonDecode(cleanedText) as Map<String, dynamic>;
-
-      final List<dynamic> tNumsList = parsed['ticketNumbers'] ?? [];
-      final String name = parsed['buyerName'] ?? '';
-      final String phone = parsed['buyerPhone'] ?? '';
-
-      final String tNumsStr = tNumsList.map((e) => e.toString()).join(", ");
-
-      if (mounted) {
-        setState(() {
-          if (tNumsStr.isNotEmpty) _ticketController.text = tNumsStr;
-          if (name.isNotEmpty) _nameController.text = name;
-          if (phone.isNotEmpty) _phoneController.text = phone;
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Scan complete! Please review and save."),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Scan failed: $e"),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isScanning = false);
-    }
-  }
 
   // Save single ticket with duplication checks
   Future<void> _saveSingleTicket() async {
@@ -462,37 +260,6 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
                   const Text(
                     "Manual Single Registration",
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    onPressed: () async {
-                      final doc = await FirebaseFirestore.instance.collection('config').doc('keys').get();
-                      final currentKey = doc.exists ? (doc.data()?['geminiApiKey']?.toString() ?? '') : '';
-                      if (!mounted) return;
-                      final String? enteredKey = await _showApiKeyDialog(currentKey);
-                      if (enteredKey != null) {
-                        await FirebaseFirestore.instance.collection('config').doc('keys').set({
-                          'geminiApiKey': enteredKey,
-                        }, SetOptions(merge: true));
-                        if (!mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Gemini API Key updated successfully!")),
-                        );
-                      }
-                    },
-                    tooltip: "Configure Gemini API Key",
-                    icon: const Icon(Icons.vpn_key_outlined, color: Color(0xFF00695C)),
-                  ),
-                  IconButton(
-                    onPressed: _isScanning ? null : _scanTicketPhoto,
-                    tooltip: "Scan Physical Ticket via AI",
-                    icon: _isScanning
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00695C)),
-                          )
-                        : const Icon(Icons.camera_alt_outlined, color: Color(0xFF00695C)),
                   ),
                 ],
               ),

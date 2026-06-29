@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:bnya/data/models/contributor/contributor.dart';
+import 'package:bnya/view/lottery/ticket_model.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -823,8 +824,8 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder:
-          (ctx) => StatefulBuilder(
-            builder: (ctx, setSheetState) {
+          (context) => StatefulBuilder(
+            builder: (context, setSheetState) {
               Future<void> pickImg(ImageSource src) async {
                 final xfile = await ImagePicker().pickImage(
                   source: src,
@@ -841,7 +842,7 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
                   20,
                   20,
                   20,
-                  MediaQuery.of(ctx).viewInsets.bottom + 20,
+                  MediaQuery.of(context).viewInsets.bottom + 20,
                 ),
                 child: SingleChildScrollView(
                   child: Column(
@@ -946,115 +947,150 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
                                     final amt = double.tryParse(
                                       amountCtrl.text,
                                     );
-                                    if (amt == null || amt <= 0) return;
+                                    if (amt == null || amt <= 0) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text("Please enter a valid amount"),
+                                          backgroundColor: Colors.red,
+                                        ),
+                                      );
+                                      return;
+                                    }
                                     setSheetState(() => isLoading = true);
 
-                                    String? url;
-                                    if (imgBytes != null) {
-                                      try {
-                                        final ref = FirebaseStorage.instance
-                                            .ref()
-                                            .child(
-                                              'payment_proofs/${c.id}/${DateTime.now().millisecondsSinceEpoch}.jpg',
+                                    try {
+                                      String? url;
+                                      if (imgBytes != null) {
+                                        try {
+                                          final ref = FirebaseStorage.instance
+                                              .ref()
+                                              .child(
+                                                'payment_proofs/${c.id}/${DateTime.now().millisecondsSinceEpoch}.jpg',
+                                              );
+                                          await ref.putData(
+                                            imgBytes!,
+                                            SettableMetadata(
+                                              contentType: 'image/jpeg',
+                                            ),
+                                          );
+                                          url = await ref.getDownloadURL();
+                                        } catch (e) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(
+                                              content: Text("Image upload failed: $e"),
+                                              backgroundColor: Colors.red,
+                                            ),
+                                          );
+                                          setSheetState(
+                                            () => isLoading = false,
+                                          );
+                                          return;
+                                        }
+                                      }
+
+                                      final newPay = PaymentRecord(
+                                        id:
+                                            DateTime.now()
+                                                .millisecondsSinceEpoch
+                                                .toString(),
+                                        amount: amt,
+                                        date: DateTime.now(),
+                                        type: selectedType,
+                                        referenceId: refCtrl.text,
+                                        remarks: ticketsCtrl.text.trim(),
+                                        imageUrl: url,
+                                      );
+
+                                      final history =
+                                          [
+                                            ...c.paymentHistory,
+                                            newPay,
+                                          ].map((e) => e.toMap()).toList();
+
+                                      final List<int> tickets = _parseTicketNumbers(ticketsCtrl.text);
+                                      final firestore = FirebaseFirestore.instance;
+
+                                      if (tickets.isNotEmpty) {
+                                        final List<DocumentSnapshot> snaps = await Future.wait(
+                                          tickets.map((t) => firestore.collection('tickets').doc(t.toString()).get())
+                                        );
+                                        final List<int> duplicateTickets = [];
+                                        for (final snap in snaps) {
+                                          if (snap.exists) {
+                                            final int? existingNum = int.tryParse(snap.id);
+                                            if (existingNum != null) {
+                                              duplicateTickets.add(existingNum);
+                                            }
+                                          }
+                                        }
+                                        if (duplicateTickets.isNotEmpty) {
+                                          if (mounted) {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              SnackBar(
+                                                content: Text("Error: Ticket(s) ${duplicateTickets.map((t) => '#${Ticket.formatNumber(t)}').join(', ')} already registered!"),
+                                                backgroundColor: Colors.red,
+                                              ),
                                             );
-                                        await ref.putData(
-                                          imgBytes!,
-                                          SettableMetadata(
-                                            contentType: 'image/jpeg',
+                                          }
+                                          setSheetState(() => isLoading = false);
+                                          return;
+                                        }
+                                      }
+
+                                      final batch = firestore.batch();
+
+                                      final contributorRef = firestore.collection('contributors').doc(c.id);
+                                      batch.update(contributorRef, {'paymentHistory': history});
+
+                                      final ledgerRef = firestore.collection('ledger').doc();
+                                      batch.set(ledgerRef, {
+                                        'type': 'income',
+                                        'date': Timestamp.now(),
+                                        'voucher': 'Collection: ${c.name} (${c.id})',
+                                        'cash': amt,
+                                        'bankSbi': 0.0,
+                                        'bankHdfc': 0.0,
+                                        'sheetRowId': DateTime.now().millisecondsSinceEpoch,
+                                        'createdAt': FieldValue.serverTimestamp(),
+                                      });
+
+                                      for (final tNum in tickets) {
+                                        final int bookId = ((tNum - 1) ~/ 100) + 1;
+                                        final ticketRef = firestore.collection('tickets').doc(tNum.toString());
+                                        batch.set(ticketRef, {
+                                          'ticketNumber': tNum,
+                                          'bookId': bookId,
+                                          'buyerName': c.name,
+                                          'buyerPhone': c.contactNumber,
+                                          'isSold': true,
+                                          'hasWonConsolation': false,
+                                          'hasWonGrandPrize': false,
+                                        }, SetOptions(merge: true));
+                                      }
+
+                                      await batch.commit();
+
+                                      if (mounted) Navigator.pop(context);
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text("Payment registered successfully!"),
+                                            backgroundColor: Colors.green,
                                           ),
                                         );
-                                        url = await ref.getDownloadURL();
-                                      } catch (e) {
-                                        setSheetState(
-                                          () => isLoading = false,
-                                        );
-                                        return;
                                       }
+                                    } catch (e) {
+                                      debugPrint("Confirm Payment Error: $e");
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text("Payment failed: $e"),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                      }
+                                      setSheetState(() => isLoading = false);
                                     }
-
-                                    final newPay = PaymentRecord(
-                                      id:
-                                          DateTime.now()
-                                              .millisecondsSinceEpoch
-                                              .toString(),
-                                      amount: amt,
-                                      date: DateTime.now(),
-                                      type: selectedType,
-                                      referenceId: refCtrl.text,
-                                      remarks: ticketsCtrl.text.trim(),
-                                      imageUrl: url,
-                                    );
-
-                                    final history =
-                                        [
-                                          ...c.paymentHistory,
-                                          newPay,
-                                        ].map((e) => e.toMap()).toList();
-
-                                     final List<int> tickets = _parseTicketNumbers(ticketsCtrl.text);
-                                     final firestore = FirebaseFirestore.instance;
-
-                                     if (tickets.isNotEmpty) {
-                                       final List<DocumentSnapshot> snaps = await Future.wait(
-                                         tickets.map((t) => firestore.collection('tickets').doc(t.toString()).get())
-                                       );
-                                       final List<int> duplicateTickets = [];
-                                       for (final snap in snaps) {
-                                         if (snap.exists) {
-                                           final int? existingNum = int.tryParse(snap.id);
-                                           if (existingNum != null) {
-                                             duplicateTickets.add(existingNum);
-                                           }
-                                         }
-                                       }
-                                       if (duplicateTickets.isNotEmpty) {
-                                         if (mounted) {
-                                           ScaffoldMessenger.of(context).showSnackBar(
-                                             SnackBar(
-                                               content: Text("Error: Ticket(s) #${duplicateTickets.join(', ')} already registered!"),
-                                               backgroundColor: Colors.red,
-                                             ),
-                                           );
-                                         }
-                                         setSheetState(() => isLoading = false);
-                                         return;
-                                       }
-                                     }
-
-                                     final batch = firestore.batch();
-
-                                     final contributorRef = firestore.collection('contributors').doc(c.id);
-                                     batch.update(contributorRef, {'paymentHistory': history});
-
-                                     final ledgerRef = firestore.collection('ledger').doc();
-                                     batch.set(ledgerRef, {
-                                       'type': 'income',
-                                       'date': Timestamp.now(),
-                                       'voucher': 'Collection: ${c.name} (${c.id})',
-                                       'cash': amt,
-                                       'bankSbi': 0.0,
-                                       'bankHdfc': 0.0,
-                                       'sheetRowId': DateTime.now().millisecondsSinceEpoch,
-                                       'createdAt': FieldValue.serverTimestamp(),
-                                     });
-
-                                     for (final tNum in tickets) {
-                                       final int bookId = ((tNum - 1) ~/ 100) + 1;
-                                       final ticketRef = firestore.collection('tickets').doc(tNum.toString());
-                                       batch.set(ticketRef, {
-                                         'ticketNumber': tNum,
-                                         'bookId': bookId,
-                                         'buyerName': c.name,
-                                         'buyerPhone': c.contactNumber,
-                                         'isSold': true,
-                                         'hasWonConsolation': false,
-                                         'hasWonGrandPrize': false,
-                                       }, SetOptions(merge: true));
-                                     }
-
-                                     await batch.commit();
-
-                                     if (mounted) Navigator.pop(context);
                                   },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.blue[900],
@@ -1573,24 +1609,39 @@ List<int> _parseTicketNumbers(String input) {
   final List<int> results = [];
   final parts = input.split(',');
   for (var part in parts) {
-    part = part.trim();
+    part = part.trim().toUpperCase();
     if (part.isEmpty) continue;
 
-    final rangeMatch = RegExp(r'[a-zA-Z]*\s*(\d+)\s*(?:-|to)\s*[a-zA-Z]*\s*(\d+)').firstMatch(part);
+    // Matches ranges like A0001-A0010, B0001-B0010, A0001 to A0010, or 0001-0010
+    final rangeMatch = RegExp(r'^([A-B]?)(\d+)\s*(?:-|to)\s*([A-B]?)(\d+)$').firstMatch(part);
     if (rangeMatch != null) {
-      final start = int.tryParse(rangeMatch.group(1)!) ?? 0;
-      final end = int.tryParse(rangeMatch.group(2)!) ?? 0;
-      if (start > 0 && end >= start) {
-        for (int i = start; i <= end; i++) {
-          results.add(i);
+      final startPrefix = rangeMatch.group(1) ?? '';
+      final startNum = int.tryParse(rangeMatch.group(2)!) ?? 0;
+      final endPrefix = rangeMatch.group(3) ?? '';
+      final endNum = int.tryParse(rangeMatch.group(4)!) ?? 0;
+
+      final effectiveStartPrefix = startPrefix.isNotEmpty ? startPrefix : 'A';
+      final effectiveEndPrefix = endPrefix.isNotEmpty ? endPrefix : effectiveStartPrefix;
+
+      if (effectiveStartPrefix == effectiveEndPrefix) {
+        final int offset = (effectiveStartPrefix == 'B') ? 10000 : 0;
+        if (startNum > 0 && endNum >= startNum) {
+          for (int i = startNum; i <= endNum; i++) {
+            if (i >= 1 && i <= 10000) {
+              results.add(offset + i);
+            }
+          }
         }
       }
     } else {
-      final numberMatch = RegExp(r'\d+').firstMatch(part);
+      final numberMatch = RegExp(r'^([A-B]?)(\d+)$').firstMatch(part);
       if (numberMatch != null) {
-        final numVal = int.tryParse(numberMatch.group(0)!) ?? 0;
-        if (numVal > 0) {
-          results.add(numVal);
+        final prefix = numberMatch.group(1) ?? '';
+        final numVal = int.tryParse(numberMatch.group(2)!) ?? 0;
+        final effectivePrefix = prefix.isNotEmpty ? prefix : 'A';
+        final int offset = (effectivePrefix == 'B') ? 10000 : 0;
+        if (numVal >= 1 && numVal <= 10000) {
+          results.add(offset + numVal);
         }
       }
     }
