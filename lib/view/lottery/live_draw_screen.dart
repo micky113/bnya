@@ -274,7 +274,10 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> {
           _countdownTimer?.cancel();
           _grandRollTimer?.cancel();
           _isCountingDown = false;
-          _revealedGrandWinner = selectedWinner.copyWith(hasWonGrandPrize: true);
+          _revealedGrandWinner = selectedWinner.copyWith(
+            hasWonGrandPrize: true,
+            grandPrizeNumber: 5 - _currentGrandPrizeIndex,
+          );
           _grandPrizeWinners.add(_revealedGrandWinner!);
           _currentGrandPrizeIndex++;
         }
@@ -296,7 +299,10 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> {
           .where('hasWonGrandPrize', isEqualTo: true)
           .get();
       for (var doc in oldWinnersSnap.docs) {
-        batch.update(doc.reference, {'hasWonGrandPrize': false});
+        batch.update(doc.reference, {
+          'hasWonGrandPrize': false,
+          'grandPrizeNumber': FieldValue.delete(),
+        });
       }
 
       final oldConsolationsSnap = await firestore
@@ -341,6 +347,7 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> {
         final docRef = firestore.collection('tickets').doc(winner.ticketNumber.toString());
         batch.update(docRef, {
           'hasWonGrandPrize': true,
+          'grandPrizeNumber': winner.grandPrizeNumber,
         });
       }
 
@@ -433,7 +440,7 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> {
             ),
             onPressed: _loadSoldTickets,
             icon: const Icon(Icons.cloud_download_outlined),
-            label: const Text("LOAD FIREBASE TICKETS", style: TextStyle(fontWeight: FontWeight.bold)),
+            label: const Text("LOAD ALL LOTTERY TICKETS", style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -737,7 +744,7 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> {
               ),
               const SizedBox(height: 10),
               Text(
-                "Prize ${_currentGrandPrizeIndex + 1} of 5",
+                "Prize ${5 - _currentGrandPrizeIndex} of 5",
                 style: const TextStyle(color: Colors.white70, fontSize: 18, fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 36),
@@ -888,7 +895,7 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> {
                       child: isDrawn
                           ? const Icon(Icons.star, color: Colors.white, size: 20)
                           : Text(
-                              (index + 1).toString(),
+                              (5 - index).toString(),
                               style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold),
                             ),
                     ),
@@ -951,11 +958,6 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> {
                   "LOTTERY SESSION COMPLETED!",
                   style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900, letterSpacing: 1),
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  "All prizes have been drawn and synchronized with Firestore.",
-                  style: TextStyle(color: Colors.grey),
-                ),
                 const SizedBox(height: 24),
                 const Divider(color: Colors.white24),
                 const SizedBox(height: 16),
@@ -983,7 +985,7 @@ class _LiveDrawScreenState extends State<LiveDrawScreen> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            "Grand Prize #${index + 1}",
+                            "Grand Prize #${5 - index}",
                             style: TextStyle(color: Colors.amber.shade200, fontWeight: FontWeight.bold),
                           ),
                           Text(

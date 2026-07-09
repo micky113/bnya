@@ -78,7 +78,14 @@ class _WinnersScreenState extends State<WinnersScreen> {
         setState(() {
           _grandWinners = snapshot.docs.map((doc) {
             return Ticket.fromMap(doc.data() as Map<String, dynamic>, doc.id);
-          }).toList()..sort((a, b) => a.ticketNumber.compareTo(b.ticketNumber));
+          }).toList()..sort((a, b) {
+            final aPrize = a.grandPrizeNumber ?? 0;
+            final bPrize = b.grandPrizeNumber ?? 0;
+            if (aPrize != bPrize) {
+              return bPrize.compareTo(aPrize); // Descending (5 to 1)
+            }
+            return a.ticketNumber.compareTo(b.ticketNumber);
+          });
           _isLoadingGrand = false;
         });
       }
@@ -387,7 +394,7 @@ class _WinnersScreenState extends State<WinnersScreen> {
           itemCount: winners.length,
           gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
             maxCrossAxisExtent: isMobile ? 360 : 260,
-            childAspectRatio: 1.4,
+            childAspectRatio: 1.25,
             crossAxisSpacing: 16,
             mainAxisSpacing: 16,
           ),
@@ -408,7 +415,7 @@ class _WinnersScreenState extends State<WinnersScreen> {
                   ),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                padding: const EdgeInsets.all(16.0),
+                padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 10.0),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -419,11 +426,11 @@ class _WinnersScreenState extends State<WinnersScreen> {
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
-                        "PRIZE #${index + 1}",
+                        "PRIZE #${winner.grandPrizeNumber ?? (index + 1)}",
                         style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
                     Text(
                       "#${Ticket.formatNumber(winner.ticketNumber)}",
                       style: const TextStyle(
@@ -433,7 +440,7 @@ class _WinnersScreenState extends State<WinnersScreen> {
                         color: Colors.black87,
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 4),
                     Text(
                       _maskName(winner.buyerName),
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF00695C)),

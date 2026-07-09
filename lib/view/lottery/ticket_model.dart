@@ -6,6 +6,7 @@ class Ticket {
   final bool isSold;
   final bool hasWonConsolation;
   final bool hasWonGrandPrize;
+  final int? grandPrizeNumber;
 
   Ticket({
     required this.ticketNumber,
@@ -15,6 +16,7 @@ class Ticket {
     this.isSold = false,
     this.hasWonConsolation = false,
     this.hasWonGrandPrize = false,
+    this.grandPrizeNumber,
   });
 
   static String formatNumber(int id) {
@@ -38,6 +40,7 @@ class Ticket {
       isSold: map['isSold'] ?? false,
       hasWonConsolation: map['hasWonConsolation'] ?? false,
       hasWonGrandPrize: map['hasWonGrandPrize'] ?? false,
+      grandPrizeNumber: map['grandPrizeNumber'] as int?,
     );
   }
 
@@ -51,6 +54,7 @@ class Ticket {
       'isSold': isSold,
       'hasWonConsolation': hasWonConsolation,
       'hasWonGrandPrize': hasWonGrandPrize,
+      if (grandPrizeNumber != null) 'grandPrizeNumber': grandPrizeNumber,
     };
   }
 
@@ -63,6 +67,7 @@ class Ticket {
     bool? isSold,
     bool? hasWonConsolation,
     bool? hasWonGrandPrize,
+    int? grandPrizeNumber,
   }) {
     return Ticket(
       ticketNumber: ticketNumber ?? this.ticketNumber,
@@ -72,6 +77,7 @@ class Ticket {
       isSold: isSold ?? this.isSold,
       hasWonConsolation: hasWonConsolation ?? this.hasWonConsolation,
       hasWonGrandPrize: hasWonGrandPrize ?? this.hasWonGrandPrize,
+      grandPrizeNumber: grandPrizeNumber ?? this.grandPrizeNumber,
     );
   }
 }
