@@ -194,25 +194,28 @@ class _ContributorDirectoryScreenState
     BuildContext context,
     Contributor contributor,
   ) async {
-    User? user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      try {
-        user = await _authService.signInWithGoogle();
-      } catch (e) {
-        if (mounted)
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text("Auth Error: $e")));
-        return;
+    // Always sign out first to force Google Login account chooser prompt
+    await _authService.signOut();
+
+    User? user;
+    try {
+      user = await _authService.signInWithGoogle();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Auth Error: $e")));
       }
+      return;
     }
-    if (user != null && _adminEmails.contains(user.email)) {
+
+    if (user != null && user.email == "mohanty747@gmail.com") {
       if (mounted) _confirmDelete(context, contributor);
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("Access Denied."),
+            content: Text("Access Denied: Only mohanty747@gmail.com can delete contributors."),
             backgroundColor: Colors.red,
           ),
         );

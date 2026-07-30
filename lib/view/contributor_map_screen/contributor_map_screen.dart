@@ -14,6 +14,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:bnya/services/auth_service.dart';
 
 class ContributorMapScreen extends StatefulWidget {
   const ContributorMapScreen({super.key});
@@ -443,9 +444,7 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
     final double pending = c.targetAmount - paid;
     final double progress =
         c.targetAmount > 0 ? (paid / c.targetAmount).clamp(0.0, 1.0) : 0;
-    final bool isAdmin =
-        FirebaseAuth.instance.currentUser?.email != null &&
-        _adminEmails.contains(FirebaseAuth.instance.currentUser!.email);
+
 
     // Retrieve previous payments if available in your Contributor model
     // Assuming 'yearlyPayments' is a Map<String, dynamic> in your model
@@ -672,19 +671,6 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
                               icon: const Icon(Icons.location_off),
                               label: const Text("UNPIN"),
                             ),
-                            if (isAdmin) ...[
-                              const SizedBox(width: 12),
-                              OutlinedButton(
-                                onPressed: () => _confirmDelete(context, c),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: Colors.red,
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 12,
-                                  ),
-                                ),
-                                child: const Icon(Icons.delete),
-                              ),
-                            ],
                           ],
                         ),
                       ],
@@ -694,21 +680,35 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
                 Positioned(
                   top: 16,
                   right: 16,
-                  child: CircleAvatar(
-                    backgroundColor: Colors.grey[100],
-                    child: IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.blue),
-                      tooltip: "Edit Profile",
-                      onPressed: () {
-                        Navigator.pop(context); // Close bottom sheet
-                        showDialog(
-                          context: context,
-                          builder: (ctx) => EditContributorDialog(
-                            contributor: c,
-                          ),
-                        );
-                      },
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: Colors.grey[100],
+                        child: IconButton(
+                          icon: const Icon(Icons.edit, color: Colors.blue),
+                          tooltip: "Edit Profile",
+                          onPressed: () {
+                            Navigator.pop(context); // Close bottom sheet
+                            showDialog(
+                              context: context,
+                              builder: (ctx) => EditContributorDialog(
+                                contributor: c,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      CircleAvatar(
+                        backgroundColor: Colors.grey[100],
+                        child: IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          tooltip: "Delete Profile",
+                          onPressed: () => _handleDeleteContributor(context, c),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -747,6 +747,45 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
             ],
           ),
     );
+  }
+
+  Future<void> _handleDeleteContributor(BuildContext context, Contributor c) async {
+    final AuthService authService = AuthService();
+    
+    // Always sign out first to force Google Login account chooser prompt
+    await authService.signOut();
+
+    User? user;
+    try {
+      user = await authService.signInWithGoogle();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Authentication failed: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (user != null) {
+      if (user.email == "mohanty747@gmail.com") {
+        if (context.mounted) {
+          _confirmDelete(context, c);
+        }
+      } else {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Access Denied: Only mohanty747@gmail.com can delete contributors."),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
   }
 
   void _confirmDelete(BuildContext context, Contributor c) {

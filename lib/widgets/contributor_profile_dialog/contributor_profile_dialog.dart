@@ -2,6 +2,8 @@ import 'package:bnya/data/models/contributor/contributor.dart';
 import 'package:bnya/widgets/edit_contributor_dialog/edit_contributor_dialog.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:bnya/services/auth_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class ContributorProfileDialog extends StatelessWidget {
   final Contributor contributor;
@@ -118,7 +120,7 @@ class ContributorProfileDialog extends StatelessWidget {
                     child: IconButton(
                       icon: const Icon(Icons.delete, color: Colors.red),
                       tooltip: "Delete Profile",
-                      onPressed: () => _deleteContributor(context),
+                      onPressed: () => _handleDeleteContributor(context),
                     ),
                   ),
                 ],
@@ -245,8 +247,47 @@ class ContributorProfileDialog extends StatelessWidget {
     );
   }
 
+  Future<void> _handleDeleteContributor(BuildContext context) async {
+    final AuthService authService = AuthService();
+    
+    // Always sign out first to force Google Login account chooser prompt
+    await authService.signOut();
+
+    User? user;
+    try {
+      user = await authService.signInWithGoogle();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Authentication failed: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (user != null) {
+      if (user.email == "mohanty747@gmail.com") {
+        if (context.mounted) {
+          _confirmDelete(context);
+        }
+      } else {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Access Denied: Only mohanty747@gmail.com can delete contributors."),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
   // Function to handle deletion
-  Future<void> _deleteContributor(BuildContext context) async {
+  Future<void> _confirmDelete(BuildContext context) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder:
