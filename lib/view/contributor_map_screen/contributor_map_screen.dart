@@ -39,6 +39,13 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
   // Custom Marker Icons
   BitmapDescriptor? _greenMarkerIcon;
   BitmapDescriptor? _redMarkerIcon;
+  BitmapDescriptor? _yellowMarkerIcon;
+
+  // Search Logic variables
+  List<Contributor> _allContributors = [];
+  List<Contributor> _suggestions = [];
+  String? _searchedContributorId;
+  final TextEditingController _searchController = TextEditingController();
 
   static const CameraPosition _initialCameraPosition = CameraPosition(
     target: LatLng(20.2613, 85.8344),
@@ -73,6 +80,12 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
     _zoomToMyLocation(); 
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   // --- 1. IMAGE LOADER ---
   Future<BitmapDescriptor> getBytesFromAsset(String path, int width) async {
     ByteData data = await rootBundle.load(path);
@@ -88,14 +101,38 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
     );
   }
 
+  Future<BitmapDescriptor> getTintedBytesFromAsset(String path, int width, Color tintColor) async {
+    ByteData data = await rootBundle.load(path);
+    ui.Codec codec = await ui.instantiateImageCodec(
+      data.buffer.asUint8List(),
+      targetWidth: width,
+    );
+    ui.FrameInfo fi = await codec.getNextFrame();
+    ui.Image originalImage = fi.image;
+
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    final paint = ui.Paint()
+      ..colorFilter = ui.ColorFilter.mode(tintColor, ui.BlendMode.color);
+
+    canvas.drawImage(originalImage, ui.Offset.zero, paint);
+
+    final picture = recorder.endRecording();
+    final img = await picture.toImage(originalImage.width, originalImage.height);
+    final pngBytes = await img.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.fromBytes(pngBytes!.buffer.asUint8List());
+  }
+
   Future<void> _loadCustomMarkers() async {
     try {
       final green = await getBytesFromAsset('images/green_marker.png', 100);
       final red = await getBytesFromAsset('images/red_marker.png', 100);
+      final yellow = await getTintedBytesFromAsset('images/red_marker.png', 100, Colors.yellow);
       if (mounted) {
         setState(() {
           _greenMarkerIcon = green;
           _redMarkerIcon = red;
+          _yellowMarkerIcon = yellow;
         });
       }
     } catch (e) {
@@ -187,6 +224,10 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
                   .map((doc) => Contributor.fromFirestore(doc))
                   .where((c) => c.type.toLowerCase() != 'lottery_buyer')
                   .toList();
+          
+          // Cache the loaded list for searching
+          _allContributors = contributors;
+
           final unmappedContributors =
               contributors.where((c) => c.location == null).toList();
 
@@ -199,7 +240,9 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
               double pending = c.targetAmount - paid;
               bool isPaid = pending < 1.0;
               BitmapDescriptor iconToUse = BitmapDescriptor.defaultMarker;
-              if (_greenMarkerIcon != null && _redMarkerIcon != null) {
+              if (c.id == _searchedContributorId) {
+                iconToUse = _yellowMarkerIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow);
+              } else if (_greenMarkerIcon != null && _redMarkerIcon != null) {
                 iconToUse = isPaid ? _greenMarkerIcon! : _redMarkerIcon!;
               }
 
@@ -215,8 +258,16 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
                     snippet: isPaid ? "Paid" : "Due: ₹${pending.toInt()}",
                   ),
                   onTap: () {
+                    if (_searchedContributorId != null) {
+                      setState(() {
+                        _searchedContributorId = null;
+                        _searchController.clear();
+                      });
+                    }
                     Future.delayed(const Duration(milliseconds: 100), () {
-                      _showContributorDetails(context, c);
+                      if (context.mounted) {
+                        _showContributorDetails(context, c);
+                      }
                     });
                   },
                 ),
@@ -420,11 +471,141 @@ class _ContributorMapScreenState extends State<ContributorMapScreen> {
                           : const Icon(Icons.my_location),
                 ),
               ),
+
+              // --- SEARCH BAR OVERLAY ---
+              Positioned(
+                top: 12,
+                left: 16,
+                right: 76,
+                child: Column(
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(30),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black12,
+                            blurRadius: 10,
+                            offset: Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: "Search contributor name...",
+                          hintStyle: TextStyle(color: Colors.grey[400]),
+                          prefixIcon: Icon(Icons.search, color: Colors.blue[900]),
+                          suffixIcon: _searchController.text.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear, color: Colors.grey),
+                                  onPressed: () {
+                                    setState(() {
+                                      _searchController.clear();
+                                      _suggestions = [];
+                                      _searchedContributorId = null;
+                                    });
+                                  },
+                                )
+                              : null,
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 12,
+                            horizontal: 16,
+                          ),
+                        ),
+                        onChanged: _onSearchChanged,
+                      ),
+                    ),
+                    if (_suggestions.isNotEmpty)
+                      Container(
+                        margin: const EdgeInsets.only(top: 8),
+                        constraints: const BoxConstraints(maxHeight: 250),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Colors.black12,
+                              blurRadius: 10,
+                              offset: Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          padding: EdgeInsets.zero,
+                          itemCount: _suggestions.length,
+                          itemBuilder: (context, index) {
+                            final Contributor c = _suggestions[index];
+                            return ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: Colors.blue[50],
+                                child: Text(
+                                  c.name.isNotEmpty
+                                      ? c.name[0].toUpperCase()
+                                      : "?",
+                                  style: TextStyle(
+                                    color: Colors.blue[900],
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              title: Text(
+                                c.name,
+                                style: const TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              subtitle: Text(c.id),
+                              onTap: () => _selectContributor(c),
+                            );
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ],
           );
         },
       ),
     );
+  }
+
+  void _onSearchChanged(String query) {
+    if (query.trim().isEmpty) {
+      setState(() {
+        _suggestions = [];
+      });
+      return;
+    }
+    setState(() {
+      _suggestions = _allContributors.where((c) {
+        return c.name.toLowerCase().contains(query.toLowerCase()) && c.location != null;
+      }).toList();
+    });
+  }
+
+  void _selectContributor(Contributor c) async {
+    setState(() {
+      _searchedContributorId = c.id;
+      _suggestions = [];
+      _searchController.text = c.name;
+    });
+
+    FocusScope.of(context).unfocus();
+
+    if (c.location != null) {
+      final GoogleMapController controller = await _controller.future;
+      controller.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: LatLng(c.location!.latitude, c.location!.longitude),
+            zoom: 19.5,
+          ),
+        ),
+      );
+    }
   }
 
   Widget _legendItem(String assetPath, Color fallbackColor) {
