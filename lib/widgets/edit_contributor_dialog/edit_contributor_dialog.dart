@@ -26,6 +26,7 @@ class _EditContributorDialogState extends State<EditContributorDialog> {
   ];
 
   // Controllers
+  late TextEditingController _idController;
   late TextEditingController _nameController;
   late TextEditingController _phoneController;
   late TextEditingController _addressController;
@@ -40,6 +41,7 @@ class _EditContributorDialogState extends State<EditContributorDialog> {
   @override
   void initState() {
     super.initState();
+    _idController = TextEditingController(text: widget.contributor.id);
     _nameController = TextEditingController(text: widget.contributor.name);
     _phoneController = TextEditingController(
       text: widget.contributor.contactNumber,
@@ -58,6 +60,7 @@ class _EditContributorDialogState extends State<EditContributorDialog> {
 
   @override
   void dispose() {
+    _idController.dispose();
     _nameController.dispose();
     _phoneController.dispose();
     _addressController.dispose();
@@ -103,17 +106,77 @@ class _EditContributorDialogState extends State<EditContributorDialog> {
       setState(() => _isLoading = true);
 
       try {
-        await FirebaseFirestore.instance
-            .collection('contributors')
-            .doc(widget.contributor.id)
-            .update({
-              'name': _nameController.text.trim(),
-              'type': _selectedType,
-              'contactNumber': _phoneController.text.trim(),
-              'address': _addressController.text.trim(),
-              // Only update target if it was unlocked (or keep existing if locked logic needed, but usually we just overwrite)
-              'targetAmount': double.tryParse(_targetController.text) ?? 0.0,
-            });
+        final firestore = FirebaseFirestore.instance;
+        final String oldId = widget.contributor.id;
+        final String newId = _idController.text.trim().toUpperCase();
+
+        if (newId.isEmpty) {
+          throw Exception("ID cannot be empty");
+        }
+
+        final double targetAmount = double.tryParse(_targetController.text) ?? 0.0;
+        final String name = _nameController.text.trim();
+        final String phone = _phoneController.text.trim();
+        final String address = _addressController.text.trim();
+
+        if (newId != oldId) {
+          // 1. Check if new ID already exists
+          final newDocRef = firestore.collection('contributors').doc(newId);
+          final newDocSnapshot = await newDocRef.get();
+          if (newDocSnapshot.exists) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Error: ID already exists!'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+            setState(() => _isLoading = false);
+            return;
+          }
+
+          // 2. Copy the contributor data and update the ID
+          final oldDocRef = firestore.collection('contributors').doc(oldId);
+          final oldDocSnapshot = await oldDocRef.get();
+          if (!oldDocSnapshot.exists) {
+            throw Exception("Original contributor profile not found!");
+          }
+          final oldData = oldDocSnapshot.data() as Map<String, dynamic>;
+
+          final newData = Map<String, dynamic>.from(oldData);
+          newData['id'] = newId;
+          newData['name'] = name;
+          newData['type'] = _selectedType;
+          newData['contactNumber'] = phone;
+          newData['address'] = address;
+          newData['targetAmount'] = targetAmount;
+
+          final batch = firestore.batch();
+          batch.set(newDocRef, newData);
+          batch.delete(oldDocRef);
+
+          // Update related finance documents
+          final financesSnapshot = await firestore
+              .collection('finances')
+              .where('contributorId', isEqualTo: oldId)
+              .get();
+
+          for (final doc in financesSnapshot.docs) {
+            batch.update(doc.reference, {'contributorId': newId});
+          }
+
+          await batch.commit();
+        } else {
+          // Simple update
+          await firestore.collection('contributors').doc(oldId).update({
+            'name': name,
+            'type': _selectedType,
+            'contactNumber': phone,
+            'address': address,
+            'targetAmount': targetAmount,
+          });
+        }
 
         if (mounted) {
           Navigator.pop(context);
@@ -169,21 +232,17 @@ class _EditContributorDialogState extends State<EditContributorDialog> {
                 const Divider(),
                 const SizedBox(height: 16),
 
-                // Read-Only ID
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(8),
+                // Unique ID
+                TextFormField(
+                  controller: _idController,
+                  decoration: const InputDecoration(
+                    labelText: "Unique ID (e.g. SHOP-01)",
+                    border: OutlineInputBorder(),
+                    filled: true,
                   ),
-                  width: double.infinity,
-                  child: Text(
-                    "ID: ${widget.contributor.id}",
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey[700],
-                    ),
-                  ),
+                  textCapitalization: TextCapitalization.characters,
+                  validator: (val) =>
+                      val!.trim().isEmpty ? "ID required" : null,
                 ),
                 const SizedBox(height: 16),
 
