@@ -86,7 +86,9 @@ class Contributor {
     }
 
     return Contributor(
-      id: doc.id,
+      id: (data['id'] != null && data['id'].toString().trim().isNotEmpty)
+          ? data['id'].toString().trim()
+          : doc.id,
       name: data['name'] ?? '',
       type: data['type'] ?? 'resident',
       contactNumber: data['contactNumber'] ?? 'N/A',

@@ -1,8 +1,7 @@
-import 'package:bnya/services/auth_service.dart';
+import 'package:bnya/data/models/contributor/contributor.dart';
 import 'package:bnya/view/contributor_directory_screen/contributor_directory_screen.dart';
 import 'package:bnya/view/ledger_screen/ledger_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:bnya/view/lottery/admin_upload_screen.dart';
 import 'package:bnya/view/lottery/ticket_directory_screen.dart';
@@ -17,9 +16,10 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final AuthService _authService = AuthService();
   final TextEditingController _publicSearchController = TextEditingController();
   bool _isVerifying = false; // To show loading state during search
+  List<Contributor> _allContributors = [];
+  List<Contributor> _suggestions = [];
 
   final List<String> allowedEmails = [
     "mohanty747@gmail.com",
@@ -27,6 +27,12 @@ class _HomePageState extends State<HomePage> {
     "utkalspace@gmail.com",
     "mishra.debidatta@gmail.com",
   ];
+
+  @override
+  void dispose() {
+    _publicSearchController.dispose();
+    super.dispose();
+  }
 
   String _formatCurrency(double amount) {
     return amount
@@ -37,47 +43,145 @@ class _HomePageState extends State<HomePage> {
         );
   }
 
-  // --- 1. UPDATED LOGIC: Verify via ID OR Name ---
+  // --- Search Suggestions Logic ---
+  void _onSearchChanged(String query) {
+    final clean = query.trim().toLowerCase();
+    if (clean.isEmpty) {
+      setState(() {
+        _suggestions = [];
+      });
+      return;
+    }
+
+    final stripped = clean.replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+    setState(() {
+      _suggestions = _allContributors.where((c) {
+        final cId = c.id.toLowerCase();
+        final cName = c.name.toLowerCase();
+        final cIdStripped = cId.replaceAll(RegExp(r'[^a-z0-9]'), '');
+        return cId.contains(clean) ||
+            cName.contains(clean) ||
+            (stripped.isNotEmpty && cIdStripped.contains(stripped));
+      }).take(5).toList();
+    });
+  }
+
+  void _selectContributor(Contributor c) {
+    setState(() {
+      _suggestions = [];
+      _publicSearchController.text = "${c.name} (${c.id})";
+    });
+    FocusScope.of(context).unfocus();
+    _showContributorVerification(c);
+  }
+
+  void _showContributorVerification(Contributor c) {
+    double totalPaid = 0;
+    for (var payment in c.paymentHistory) {
+      totalPaid += payment.amount;
+    }
+    for (var val in c.yearlyPayments.values) {
+      totalPaid += val;
+    }
+    _showVerificationDialog(c.id, c.name, totalPaid, true);
+  }
+
+  // --- 1. Verify via ID OR Name ---
   Future<void> _verifyContribution() async {
     final String rawInput = _publicSearchController.text.trim();
     if (rawInput.isEmpty) return;
 
-    setState(() => _isVerifying = true);
+    setState(() {
+      _isVerifying = true;
+      _suggestions = [];
+    });
 
     try {
+      String cleanInput = rawInput;
+      // If the input is in "Name (ID)" format, extract the ID inside parentheses
+      final RegExp regExp = RegExp(r'\(([^)]+)\)');
+      final Match? match = regExp.firstMatch(cleanInput);
+      if (match != null && match.group(1) != null) {
+        cleanInput = match.group(1)!.trim();
+      }
+
+      final String searchTarget = cleanInput.toUpperCase();
+
+      // Check 1: In-memory exact ID or Name lookup
+      final Contributor? exactMatch = _allContributors.cast<Contributor?>().firstWhere(
+        (c) =>
+            c != null &&
+            (c.id.toUpperCase() == searchTarget ||
+                c.name.toUpperCase() == searchTarget),
+        orElse: () => null,
+      );
+
+      if (exactMatch != null) {
+        _showContributorVerification(exactMatch);
+        setState(() => _isVerifying = false);
+        return;
+      }
+
+      // Check 2: In-memory fuzzy stripped ID lookup (e.g. "SHOP01" or "SHOP 01" matching "SHOP-01")
+      final String strippedTarget = searchTarget.replaceAll(RegExp(r'[^A-Z0-9]'), '');
+      if (strippedTarget.isNotEmpty) {
+        final Contributor? fuzzyMatch = _allContributors.cast<Contributor?>().firstWhere(
+          (c) =>
+              c != null &&
+              c.id.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '') ==
+                  strippedTarget,
+          orElse: () => null,
+        );
+
+        if (fuzzyMatch != null) {
+          _showContributorVerification(fuzzyMatch);
+          setState(() => _isVerifying = false);
+          return;
+        }
+      }
+
+      // Check 3: Firestore queries if not found in local memory
       DocumentSnapshot? foundDoc;
 
-      // STEP 1: Try Direct ID Lookup (Fastest)
-      final String potentialId = rawInput.toUpperCase();
+      // STEP A: Try Direct Document ID Lookup
       final docRef = FirebaseFirestore.instance
           .collection('contributors')
-          .doc(potentialId);
+          .doc(searchTarget);
       final docSnap = await docRef.get();
 
       if (docSnap.exists) {
         foundDoc = docSnap;
       } else {
-        // STEP 2: If ID not found, Search by Name field
-        QuerySnapshot nameQuery =
-            await FirebaseFirestore.instance
+        // STEP B: Query by internal 'id' field
+        QuerySnapshot idQuery = await FirebaseFirestore.instance
+            .collection('contributors')
+            .where('id', isEqualTo: searchTarget)
+            .limit(1)
+            .get();
+
+        if (idQuery.docs.isNotEmpty) {
+          foundDoc = idQuery.docs.first;
+        } else {
+          // STEP C: Search by Name field
+          QuerySnapshot nameQuery = await FirebaseFirestore.instance
+              .collection('contributors')
+              .where('name', isEqualTo: cleanInput)
+              .limit(1)
+              .get();
+
+          if (nameQuery.docs.isNotEmpty) {
+            foundDoc = nameQuery.docs.first;
+          } else {
+            QuerySnapshot nameQueryUpper = await FirebaseFirestore.instance
                 .collection('contributors')
-                .where('name', isEqualTo: rawInput)
+                .where('name', isEqualTo: searchTarget)
                 .limit(1)
                 .get();
 
-        if (nameQuery.docs.isNotEmpty) {
-          foundDoc = nameQuery.docs.first;
-        } else {
-          // Try Uppercase Name search
-          QuerySnapshot nameQueryUpper =
-              await FirebaseFirestore.instance
-                  .collection('contributors')
-                  .where('name', isEqualTo: rawInput.toUpperCase())
-                  .limit(1)
-                  .get();
-
-          if (nameQueryUpper.docs.isNotEmpty) {
-            foundDoc = nameQueryUpper.docs.first;
+            if (nameQueryUpper.docs.isNotEmpty) {
+              foundDoc = nameQueryUpper.docs.first;
+            }
           }
         }
       }
@@ -85,31 +189,18 @@ class _HomePageState extends State<HomePage> {
       if (!mounted) return;
 
       if (foundDoc != null && foundDoc.exists) {
-        // --- RECORD FOUND ---
-        final data = foundDoc.data() as Map<String, dynamic>;
-
-        final String realId = foundDoc.id;
-        final String name = data['name'] ?? 'Unknown';
-
-        // --- UPDATED: Calculate Total from paymentHistory ---
-        final List<dynamic> history =
-            (data['paymentHistory'] as List<dynamic>?) ?? [];
-        double totalPaid = 0;
-        for (var payment in history) {
-          if (payment is Map && payment['amount'] != null) {
-            totalPaid += (payment['amount'] as num).toDouble();
-          }
-        }
-
-        _showVerificationDialog(realId, name, totalPaid, true);
+        final Contributor contributor = Contributor.fromFirestore(foundDoc);
+        _showContributorVerification(contributor);
       } else {
         // --- NOT FOUND ---
         _showVerificationDialog(rawInput, "", 0, false);
       }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Error: $e")));
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error: $e")));
+      }
     } finally {
       if (mounted) setState(() => _isVerifying = false);
     }
@@ -150,8 +241,12 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(height: 10),
                 if (exists) ...[
                   Text(
-                    name,
-                    style: const TextStyle(fontSize: 18, color: Colors.black87),
+                    name.isNotEmpty ? "$name ($id)" : "ID: $id",
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 5),
@@ -191,7 +286,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ] else ...[
                   Text(
-                    "We could not find any records for ID: $id",
+                    "We could not find any records for: $id",
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: Colors.black54),
                   ),
@@ -486,6 +581,11 @@ class _HomePageState extends State<HomePage> {
                     if (!snapshot.hasData)
                       return const Center(child: CircularProgressIndicator());
 
+                    _allContributors = snapshot.data!.docs
+                        .map((doc) => Contributor.fromFirestore(doc))
+                        .where((c) => c.type.toLowerCase() != 'lottery_buyer')
+                        .toList();
+
                     int totalContributors = snapshot.data!.docs.length;
 
                     return Column(
@@ -592,7 +692,7 @@ class _HomePageState extends State<HomePage> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      "Enter your Shop ID (e.g., SHOP-01) to check your payment status securely.",
+                      "Enter your Name or Shop ID (e.g., SHOP-01) to check your payment status securely.",
                       style: TextStyle(
                         color: Colors.grey[600],
                         fontSize: 13,
@@ -628,9 +728,9 @@ class _HomePageState extends State<HomePage> {
                                 fontSize: 16,
                                 letterSpacing: 1.0,
                               ),
-                              decoration: const InputDecoration(
-                                hintText: "ENTER ID HERE",
-                                hintStyle: TextStyle(
+                              decoration: InputDecoration(
+                                hintText: "ENTER NAME OR ID HERE",
+                                hintStyle: const TextStyle(
                                   color: Colors.grey,
                                   fontSize: 14,
                                   fontWeight: FontWeight.normal,
@@ -638,7 +738,23 @@ class _HomePageState extends State<HomePage> {
                                 ),
                                 border: InputBorder.none,
                                 isDense: true,
+                                suffixIcon: _publicSearchController.text.isNotEmpty
+                                    ? IconButton(
+                                        icon: const Icon(
+                                          Icons.clear,
+                                          color: Colors.grey,
+                                          size: 20,
+                                        ),
+                                        onPressed: () {
+                                          setState(() {
+                                            _publicSearchController.clear();
+                                            _suggestions = [];
+                                          });
+                                        },
+                                      )
+                                    : null,
                               ),
+                              onChanged: _onSearchChanged,
                               onSubmitted: (_) {
                                 FocusScope.of(context).unfocus();
                                 _verifyContribution();
@@ -656,9 +772,9 @@ class _HomePageState extends State<HomePage> {
                                   _isVerifying
                                       ? null
                                       : () {
-                                        FocusScope.of(context).unfocus();
-                                        _verifyContribution();
-                                      },
+                                          FocusScope.of(context).unfocus();
+                                          _verifyContribution();
+                                        },
                               borderRadius: BorderRadius.circular(12),
                               child: Container(
                                 width: 48,
@@ -680,17 +796,17 @@ class _HomePageState extends State<HomePage> {
                                   child:
                                       _isVerifying
                                           ? const SizedBox(
-                                            width: 20,
-                                            height: 20,
-                                            child: CircularProgressIndicator(
-                                              color: Colors.white,
-                                              strokeWidth: 2,
-                                            ),
-                                          )
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(
+                                                color: Colors.white,
+                                                strokeWidth: 2,
+                                              ),
+                                            )
                                           : const Icon(
-                                            Icons.arrow_forward_rounded,
-                                            color: Colors.white,
-                                          ),
+                                              Icons.arrow_forward_rounded,
+                                              color: Colors.white,
+                                            ),
                                 ),
                               ),
                             ),
@@ -698,6 +814,71 @@ class _HomePageState extends State<HomePage> {
                         ],
                       ),
                     ),
+
+                    // LIVE SUGGESTIONS DROPDOWN
+                    if (_suggestions.isNotEmpty)
+                      Container(
+                        margin: const EdgeInsets.only(top: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Colors.black12,
+                              blurRadius: 10,
+                              offset: Offset(0, 4),
+                            ),
+                          ],
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          itemCount: _suggestions.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final Contributor c = _suggestions[index];
+                            return ListTile(
+                              dense: true,
+                              leading: CircleAvatar(
+                                radius: 16,
+                                backgroundColor: Colors.blue[50],
+                                child: Text(
+                                  c.name.isNotEmpty
+                                      ? c.name[0].toUpperCase()
+                                      : "?",
+                                  style: TextStyle(
+                                    color: Colors.blue[900],
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                              title: Text(
+                                "${c.name} (${c.id})",
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              subtitle: Text(
+                                c.type.toUpperCase(),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                              trailing: Icon(
+                                Icons.chevron_right,
+                                size: 18,
+                                color: Colors.blue[800],
+                              ),
+                              onTap: () => _selectContributor(c),
+                            );
+                          },
+                        ),
+                      ),
                   ],
                 ),
               ),
